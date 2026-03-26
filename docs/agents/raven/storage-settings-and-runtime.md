@@ -27,6 +27,10 @@
   title folder: `{title}`
   chapter archive: `{title} c{chapter} (v{volume}) [Noona].cbz`
   page file: `{page_padded}{ext}`
+- Raven only resolves `{volume}` and `{volume_padded}` when the title already has an explicit `chapterVolumeMap`
+  entry for that chapter.
+  With the built-in default chapter template, unmapped chapters omit the volume segment entirely instead of inventing
+  `v01`.
 - Placeholder support lives in
   [DownloadNamingSettings.java](../../../services/raven/src/main/java/com/paxkun/raven/service/settings/DownloadNamingSettings.java).
 - File naming and manifest compatibility are admin-visible contracts. Do not change them casually.
@@ -71,6 +75,10 @@
 - Raven downloads and refreshes PIA OpenVPN profiles automatically, then uses the `openvpn` binary at runtime.
 - `enabled=true` now means Raven will try to establish a baseline VPN tunnel whenever it is disconnected.
   `autoRotate` only controls later periodic re-rotation, not the initial connect.
+- Saving `enabled=false` now asks Raven to apply the disabled runtime state immediately.
+  If a rotation is already in flight, Raven queues the disable, finishes the current transition, then disconnects.
+- `enabled` and `onlyDownloadWhenVpnOn` remain separate.
+  Turning VPN off does not silently clear the download wait gate for queued jobs.
 - Profile discovery is recursive under `downloads/vpn/pia/profiles` so nested upstream zip layouts still resolve region
   ids by profile basename.
 - Profile refresh is atomic: Raven downloads and extracts into temp paths, validates that the refreshed archive

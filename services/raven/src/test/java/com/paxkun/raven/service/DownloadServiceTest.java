@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/download/QueueDownloadResult.java
  * - src/main/java/com/paxkun/raven/service/download/SearchTitle.java
  * - src/main/java/com/paxkun/raven/service/download/SourceFinder.java
- * Times this file has been edited: 17
+ * Times this file has been edited: 19
  */
 package com.paxkun.raven.service;
 
@@ -527,11 +527,22 @@ class DownloadServiceTest {
             assertThat(stream.toList())
                     .hasSize(1)
                     .allSatisfy(path -> assertThat(path.getFileName().toString())
-                            .isEqualTo("Solo Leveling c001 (v01) [Noona].cbz"));
+                            .isEqualTo("Solo Leveling c001 [Noona].cbz"));
         }
         assertThat(Files.exists(downloadingTitleFolder)).isFalse();
         assertThat(resolvedTitle.getDownloadPath()).isEqualTo(downloadedTitleFolder.toString());
         verify(libraryService).scanKavitaLibraryForType("Manhwa");
+    }
+
+    @Test
+    void buildChapterArchiveNameOmitsVolumeWhenNoChapterVolumeMapExists() {
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setType("Manhwa");
+
+        String archiveName = downloadService.buildChapterArchiveName(title, "1", 12, "example.com");
+
+        assertThat(archiveName).isEqualTo("Solo Leveling c001 [Noona].cbz");
     }
 
     @Test
@@ -599,7 +610,35 @@ class DownloadServiceTest {
         waitForStatus("Solo Leveling", "completed");
 
         assertThat(resolvedTitle.getDownloadedChapterFiles())
-                .containsEntry("1", "Solo Leveling c001 (v01) [Noona].cbz");
+                .containsEntry("1", "Solo Leveling c001 [Noona].cbz");
+    }
+
+    @Test
+    void pageTemplateLeavesVolumeTokensBlankWhenNoChapterVolumeMapExists() {
+        DownloadNamingSettings naming = new DownloadNamingSettings(
+                "downloads.naming",
+                "{title}",
+                "{title} c{chapter} (v{volume}) [Noona].cbz",
+                "{volume}{page_padded}{ext}",
+                3,
+                3,
+                2
+        );
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setType("Manhwa");
+
+        String pageName = ReflectionTestUtils.invokeMethod(
+                downloadService,
+                "formatPageFileName",
+                naming,
+                title,
+                "1",
+                2,
+                ".jpg"
+        );
+
+        assertThat(pageName).isEqualTo("002.jpg");
     }
 
     @Test

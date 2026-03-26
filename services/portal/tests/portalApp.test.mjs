@@ -2,7 +2,7 @@
  * @fileoverview Covers Portal HTTP route contracts and upstream error handling.
  * Related files:
  * - app/createPortalApp.mjs
- * Times this file has been edited: 14
+ * Times this file has been edited: 15
  */
 
 import assert from 'node:assert/strict';
@@ -1419,7 +1419,7 @@ test('POST /api/portal/raven/title-volume-map returns no-op when Komf has no usa
         assert.equal(payload.status, 'no-op');
         assert.equal(payload.mappedChapterCount, 0);
         assert.equal(payload.renameSummary, null);
-        assert.match(payload.message, /kept fallback v01/i);
+        assert.match(payload.message, /left chapter file naming unchanged/i);
         assert.deepEqual(calls, [
             {
                 type: 'series-details',

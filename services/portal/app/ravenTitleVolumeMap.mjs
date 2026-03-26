@@ -5,7 +5,7 @@
  * - clients/ravenClient.mjs
  * - clients/komfClient.mjs
  * - discord/recommendationNotifier.mjs
- * Times this file has been edited: 2
+ * Times this file has been edited: 3
  */
 
 const normalizeString = (value) => (typeof value === 'string' ? value.trim() : '');
@@ -192,7 +192,7 @@ export const applyRavenTitleVolumeMap = async ({
         message:
             status === 'applied'
                 ? buildAppliedMessage(renameSummary)
-                : 'Metadata applied, but the provider had no usable chapter-to-volume coverage, so Raven kept fallback v01 file names.',
+                : 'Metadata applied, but the provider had no usable chapter-to-volume coverage, so Raven left chapter file naming unchanged.',
     };
 };
 

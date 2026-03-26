@@ -543,6 +543,21 @@ export const createRavenClient = ({
                 body: JSON.stringify({triggeredBy}),
             }, {acceptStatuses: VPN_ACTION_ACCEPT_STATUSES})
         },
+        async disableVpnNow(triggeredBy = 'manual') {
+            const {payload} = await fetchRavenAction('/v1/vpn/disable', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', Accept: 'application/json'},
+                body: JSON.stringify({triggeredBy}),
+            }, {acceptStatuses: VPN_ACTION_ACCEPT_STATUSES})
+            return payload
+        },
+        async disableVpnNowDetailed(triggeredBy = 'manual') {
+            return await fetchRavenAction('/v1/vpn/disable', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', Accept: 'application/json'},
+                body: JSON.stringify({triggeredBy}),
+            }, {acceptStatuses: VPN_ACTION_ACCEPT_STATUSES})
+        },
         async testVpnLogin({
                                  triggeredBy = 'manual',
                                  region = '',

@@ -64,11 +64,16 @@
 - `POST /v1/vpn/rotate` triggers the manual path.
   Raven reserves `rotationInProgress`, validates enabled PIA settings immediately, and only then returns the async
   accepted response.
+- `POST /v1/vpn/disable` now applies the disabled runtime state immediately when Raven is idle.
+  If Raven is already rotating, it queues the disable, lets the active maintenance-safe reconnect finish, then
+  disconnects instead of leaving the tunnel connected.
 - Raven uses a fresh VPN settings read for manual-rotate validation and for the scheduler's auto-connect path, so a
   save in Moon or Sage is visible to Raven right away instead of after the normal settings cache TTL.
 - Auto-connect and manual rotation both use the same maintenance-pause flow:
   pause active downloads, wait for in-flight work to drain, reconnect OpenVPN, restore preserved local routes, then
   resume only the titles paused by that VPN transition.
+- A queued disable does not clear `onlyDownloadWhenVpnOn`.
+  Raven still reads that gate separately when deciding whether queued downloads should wait for a VPN connection.
 - Stage-specific failures are recorded at the point they happen.
   `VpnRuntimeStatus.lastError` and the manual rotation result now keep the primary failure stage detail, and follow-up
   cleanup problems are appended instead of replacing the original cause.

@@ -95,8 +95,13 @@
 - `PUT /api/settings/downloads/vpn` now persists the draft first, then only asks Raven to reconnect when
   `applyNow=true` and either the connection-affecting fields changed (`enabled`, `region`, `piaUsername`,
   `piaPassword`) or Raven is still disconnected.
+- The same save route now also applies `enabled=false` immediately when Raven is still connected or queues that disable
+  behind the active rotation when Raven is still busy.
+- Moon's busy-disable save path only sends `enabled=false`, `applyNow=true`, and `triggeredBy`, so Sage does not
+  accidentally persist stale region or credential edits that were still on the card while Raven was rotating.
 - Non-connection VPN fields such as `onlyDownloadWhenVpnOn`, `autoRotate`, and `rotateEveryMinutes` do not force a
   reconnect when Raven is already connected.
+  Disabling VPN also leaves `onlyDownloadWhenVpnOn` alone because the download gate is still a separate setting.
 - VPN test-login preserves the stored password when the caller sends the masked placeholder `********`, then returns
   Raven's final probe result instead of a queued-job acknowledgement.
 - `POST /api/settings/downloads/vpn/rotate` now writes the current VPN draft first, with the same masked-password

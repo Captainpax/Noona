@@ -1,11 +1,11 @@
 /**
- * Exposes Raven VPN status, region, rotation, and login-test endpoints.
+ * Exposes Raven VPN status, region, rotation, disable, and login-test endpoints.
  * Related files:
  * - src/main/java/com/paxkun/raven/service/LoggerService.java
  * - src/main/java/com/paxkun/raven/service/VPNServices.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnLoginTestResult.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnRegionOption.java
- * Times this file has been edited: 4
+ * Times this file has been edited: 5
  */
 package com.paxkun.raven.controller;
 
@@ -26,7 +26,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Exposes Raven VPN status, region, rotation, and login-test endpoints.
+ * Exposes Raven VPN status, region, rotation, disable, and login-test endpoints.
  */
 
 @RestController
@@ -74,6 +74,21 @@ public class VpnController {
         return ResponseEntity.status(resolveRotationStatus(result)).body(result);
     }
 
+    /**
+     * Applies or queues Raven's disabled VPN state.
+     *
+     * @param body The request payload.
+     * @return The HTTP response.
+     */
+    @PostMapping("/disable")
+    public ResponseEntity<VpnRotationResult> disableNow(@RequestBody(required = false) Map<String, Object> body) {
+        String trigger = body != null && body.get("triggeredBy") instanceof String raw ? raw : "manual";
+        String sanitizedTrigger = sanitizeForLog(trigger);
+        logger.info("VPN_CONTROLLER", "Disable-now request received | trigger=" + sanitizedTrigger);
+        VpnRotationResult result = vpnServices.disableNow(sanitizedTrigger);
+        return ResponseEntity.status(resolveDisableStatus(result)).body(result);
+    }
+
     @PostMapping("/test-login")
     public ResponseEntity<VpnLoginTestResult> testLogin(@RequestBody(required = false) Map<String, Object> body) {
         String trigger = body != null && body.get("triggeredBy") instanceof String raw ? raw : "manual";
@@ -96,6 +111,20 @@ public class VpnController {
     private HttpStatus resolveRotationStatus(VpnRotationResult result) {
         if (result != null && result.ok()) {
             return HttpStatus.ACCEPTED;
+        }
+        return resolveFailureStatus(result == null ? "" : result.message());
+    }
+
+    /**
+     * Resolves the HTTP status for a Raven VPN disable response.
+     *
+     * @param result The Raven VPN disable payload.
+     * @return The HTTP status Raven should return.
+     */
+    private HttpStatus resolveDisableStatus(VpnRotationResult result) {
+        if (result != null && result.ok()) {
+            String normalized = sanitizeForLog(result.message()).toLowerCase(Locale.ROOT);
+            return normalized.contains("queued") ? HttpStatus.ACCEPTED : HttpStatus.OK;
         }
         return resolveFailureStatus(result == null ? "" : result.message());
     }

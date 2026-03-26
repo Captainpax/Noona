@@ -36,6 +36,17 @@ const didVpnConnectionSettingsChange = (current = {}, next = {}) =>
     || trimString(current?.piaUsername) !== trimString(next?.piaUsername)
     || trimString(current?.piaPassword) !== trimString(next?.piaPassword)
 
+const shouldApplyDisabledVpnSettings = (status = null) => {
+    if (!status || typeof status !== 'object') {
+        return true
+    }
+
+    const connectionState = trimString(status?.connectionState).toLowerCase()
+    return status?.connected === true
+        || status?.rotating === true
+        || connectionState !== 'disabled'
+}
+
 const buildSavedVpnSettingsResponse = (sanitizeDownloadVpnSettingsForResponse, settings, extras = {}) => ({
     ...sanitizeDownloadVpnSettingsForResponse(settings),
     ...extras,
@@ -406,11 +417,24 @@ export function registerSettingsRoutes(context = {}) {
                     logger.warn(`[${serviceName}] Failed to fetch Raven VPN status before applying saved settings: ${error.message}`)
                 }
             }
+            if (applyNow && settings.enabled !== true && typeof ravenClient?.getVpnStatus === 'function') {
+                try {
+                    vpnStatus = await ravenClient.getVpnStatus()
+                } catch (error) {
+                    logger.warn(`[${serviceName}] Failed to fetch Raven VPN status before disabling saved settings: ${error.message}`)
+                }
+            }
 
             const applyTriggered =
-                applyNow
-                && settings.enabled === true
-                && (connectionSettingsChanged || (vpnStatus && vpnStatus.connected !== true))
+                settings.enabled === true
+                    ? (
+                        applyNow
+                        && (connectionSettingsChanged || (vpnStatus && vpnStatus.connected !== true))
+                    )
+                    : (
+                        applyNow
+                        && shouldApplyDisabledVpnSettings(vpnStatus)
+                    )
 
             if (!applyTriggered) {
                 res.json(buildSavedVpnSettingsResponse(
@@ -421,30 +445,54 @@ export function registerSettingsRoutes(context = {}) {
                 return
             }
 
-            if (!ravenClient?.rotateVpnNow && !ravenClient?.rotateVpnNowDetailed) {
+            if (
+                settings.enabled === true
+                    ? (!ravenClient?.rotateVpnNow && !ravenClient?.rotateVpnNowDetailed)
+                    : (!ravenClient?.disableVpnNow && !ravenClient?.disableVpnNowDetailed)
+            ) {
                 res.status(503).json(buildSavedVpnSettingsResponse(
                     sanitizeDownloadVpnSettingsForResponse,
                     settings,
                     {
                         applyTriggered: true,
-                        error: 'Raven VPN API is unavailable.',
+                        error: settings.enabled === true
+                            ? 'Raven VPN API is unavailable.'
+                            : 'Raven VPN disable API is unavailable.',
                     },
                 ))
                 return
             }
 
-            const result = typeof ravenClient?.rotateVpnNowDetailed === 'function'
-                ? await ravenClient.rotateVpnNowDetailed(triggeredBy)
-                : await resolveActionResult(
-                    () => ravenClient.rotateVpnNow(triggeredBy),
-                    202,
-                    () => ({ok: false, error: 'Raven VPN rotation did not return a payload.'}),
-                )
+            const result =
+                settings.enabled === true
+                    ? (
+                        typeof ravenClient?.rotateVpnNowDetailed === 'function'
+                            ? await ravenClient.rotateVpnNowDetailed(triggeredBy)
+                            : await resolveActionResult(
+                                () => ravenClient.rotateVpnNow(triggeredBy),
+                                202,
+                                () => ({ok: false, error: 'Raven VPN rotation did not return a payload.'}),
+                            )
+                    )
+                    : (
+                        typeof ravenClient?.disableVpnNowDetailed === 'function'
+                            ? await ravenClient.disableVpnNowDetailed(triggeredBy)
+                            : await resolveActionResult(
+                                () => ravenClient.disableVpnNow(triggeredBy),
+                                200,
+                                () => ({ok: false, error: 'Raven VPN disable did not return a payload.'}),
+                            )
+                    )
             const resultStatus = Number.isInteger(result?.status) ? result.status : 502
             const payload = result?.payload ?? null
             const applyFailed = resultStatus >= 400 || (payload && typeof payload === 'object' && payload.ok === false)
             if (applyFailed) {
-                const failure = resolveVpnActionErrorPayload(result, 'Unable to apply Raven VPN settings.')
+                const failure = resolveVpnActionErrorPayload(
+                    result,
+                    settings.enabled === true
+                        ? 'Unable to apply Raven VPN settings.'
+                        : 'Unable to disable Raven VPN.',
+                )
                 res.status(failure.status).json(buildSavedVpnSettingsResponse(
                     sanitizeDownloadVpnSettingsForResponse,
                     settings,

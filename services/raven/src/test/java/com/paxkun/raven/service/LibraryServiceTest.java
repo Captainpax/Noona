@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/library/NewChapter.java
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/service/LibraryService.java
- * Times this file has been edited: 16
+ * Times this file has been edited: 17
  */
 package com.paxkun.raven.service;
 
@@ -501,6 +501,47 @@ class LibraryServiceTest {
         assertThat(titleFolder.resolve("Solo Leveling c001 (v01) [Noona].cbz")).doesNotExist();
         assertThat(titleFolder.resolve("Solo Leveling c001 (v02) [Noona].cbz")).exists();
         assertThat(titleFolder.resolve("uuid-volume-rename.noona")).exists();
+    }
+
+    @Test
+    void applyTitleVolumeMapRenamesChapterOnlyFilesWhenVolumeWasUnknownAtDownloadTime() throws Exception {
+        Path titleFolder = tempDir.resolve("downloaded").resolve("manhwa").resolve("Solo Leveling");
+        Files.createDirectories(titleFolder);
+        writeCbz(titleFolder.resolve("Solo Leveling c001 [Noona].cbz"), "001.jpg");
+
+        NewTitle existing = new NewTitle();
+        existing.setTitleName("Solo Leveling");
+        existing.setUuid("uuid-volume-chapter-only");
+        existing.setSourceUrl("http://solo");
+        existing.setLastDownloaded("1");
+        existing.setType("Manhwa");
+        existing.setDownloadPath(titleFolder.toString());
+        existing.setDownloadedChapterNumbers(List.of("1"));
+        existing.setDownloadedChapterFiles(Map.of("1", "Solo Leveling c001 [Noona].cbz"));
+
+        Map<String, Object> stored = new HashMap<>();
+        stored.put("uuid", existing.getUuid());
+        stored.put("title", existing.getTitleName());
+        when(vaultService.findOne(eq("manga_library"), eq(Map.of("uuid", existing.getUuid(), "deletedAt", Map.of("$exists", false)))))
+                .thenReturn(stored);
+        when(vaultService.parseJson(eq(stored), eq(NewTitle.class))).thenReturn(existing);
+        when(downloadService.buildChapterArchiveName(any(NewTitle.class), eq("1"), eq(1), eq("")))
+                .thenReturn("Solo Leveling c001 (v02) [Noona].cbz");
+
+        LibraryService.VolumeMapApplyResult result = libraryService.applyTitleVolumeMap(
+                existing.getUuid(),
+                "mangaUpdates",
+                "series-123",
+                Map.of("1", 2),
+                true
+        );
+
+        assertThat(result).isNotNull();
+        assertThat(result.renameSummary().renamed()).isEqualTo(1);
+        assertThat(result.title().getDownloadedChapterFiles())
+                .containsEntry("1", "Solo Leveling c001 (v02) [Noona].cbz");
+        assertThat(titleFolder.resolve("Solo Leveling c001 [Noona].cbz")).doesNotExist();
+        assertThat(titleFolder.resolve("Solo Leveling c001 (v02) [Noona].cbz")).exists();
     }
 
     @Test

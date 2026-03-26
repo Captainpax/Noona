@@ -31,7 +31,8 @@ Raven-facing browser actions.
 - reuses the managed Kavita API key that Warden already injected into Portal or Komf when the setup summary only needs
   to sync dependent services after install, instead of forcing a second Kavita admin login
 - handles VPN settings writes, including PIA credential checks, save-first rotate requests, and immediate-apply
-  decisions for Raven when connection-affecting VPN settings changed
+  decisions for Raven when connection-affecting VPN settings changed or when a saved disable should disconnect a live
+  or still-rotating tunnel
 - preserves Raven's real queue status and message for Moon instead of flattening every queue response into a generic
   success
 - normalizes backend failures into UI-friendly responses

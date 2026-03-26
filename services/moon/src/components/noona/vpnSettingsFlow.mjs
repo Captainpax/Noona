@@ -31,6 +31,10 @@ export const DEFAULT_VPN_ROTATION_POLL_MS = 1_500
  * }} VpnDraftSnapshot
  */
 
+/**
+ * @param {{ connectionState?: string | null, rotating?: boolean } | null} [status]
+ * @returns {boolean}
+ */
 export const isVpnRuntimeBusy = (status = null) => {
     const connectionState = normalizeString(status?.connectionState).toLowerCase()
     return status?.rotating === true || VPN_BUSY_CONNECTION_STATES.has(connectionState)
@@ -52,6 +56,45 @@ export const shouldDisableVpnControls = ({
                                              rotating = false,
                                              testing = false,
                                          } = {}) => loading || saving || rotating || testing || isVpnRuntimeBusy(status)
+
+/**
+ * @param {VpnDraftInput | null} [currentDraft]
+ * @param {VpnDraftInput | null} [persistedDraft]
+ * @returns {boolean}
+ */
+const isPendingVpnDisable = (currentDraft = null, persistedDraft = null) => {
+    const normalizedCurrent = createVpnDraftSnapshot(currentDraft ?? {})
+    const normalizedPersisted = createVpnDraftSnapshot(persistedDraft ?? {})
+    return normalizedPersisted.enabled === true && normalizedCurrent.enabled === false
+}
+
+/**
+ * @param {{
+ *   status?: { connectionState?: string | null, rotating?: boolean } | null,
+ *   loading?: boolean,
+ *   saving?: boolean,
+ *   rotating?: boolean,
+ *   testing?: boolean,
+ *   currentDraft?: VpnDraftInput | null,
+ *   persistedDraft?: VpnDraftInput | null,
+ * }} [options]
+ */
+export const canSubmitVpnDisableWhileBusy = ({
+                                                 status,
+                                                 loading = false,
+                                                 saving = false,
+                                                 rotating = false,
+                                                 testing = false,
+                                                 currentDraft = null,
+                                                 persistedDraft = null,
+                                             } = {}) => {
+    if (loading || testing) {
+        return false
+    }
+
+    const busy = isVpnRuntimeBusy(status) || saving || rotating
+    return busy && isPendingVpnDisable(currentDraft, persistedDraft)
+}
 
 export const resolveVpnMessageAfterRefresh = (currentMessage, preserveMessage = false) =>
     preserveMessage ? (currentMessage ?? null) : null
@@ -131,6 +174,19 @@ export const buildVpnSaveRequestBody = ({
 
 /**
  * @param {{
+ *   triggeredBy?: string | null,
+ * }} [options]
+ */
+export const buildVpnDisableOnlySaveRequestBody = ({
+                                                       triggeredBy = "",
+                                                   } = {}) => ({
+    enabled: false,
+    applyNow: true,
+    triggeredBy: normalizeString(triggeredBy) || "manual",
+})
+
+/**
+ * @param {{
  *   draft?: VpnDraftInput,
  *   triggeredBy?: string | null,
  * }} [options]
@@ -196,6 +252,16 @@ export const formatVpnRotationOutcomeMessage = (status = null, fallback = "VPN r
     return `${safeFallback} (${details.join(", ")})`
 }
 
+export const formatVpnDisableOutcomeMessage = (status = null, fallback = "VPN disabled.") => {
+    const safeFallback = normalizeString(fallback) || "VPN disabled."
+    const error = normalizeString(status?.lastError)
+    if (error) {
+        return `VPN disable failed: ${error}`
+    }
+
+    return safeFallback
+}
+
 /**
  * @param {{
  *   ok?: boolean,
@@ -251,11 +317,11 @@ export const waitForVpnRuntimeToSettle = async ({
     }
 
     if (!snapshot) {
-        throw new Error("Failed to refresh VPN settings while waiting for rotation to finish.")
+        throw new Error("Failed to refresh VPN settings while waiting for Raven VPN to settle.")
     }
 
     if (isBusy(snapshot?.status)) {
-        throw new Error("Timed out while waiting for Raven VPN rotation to finish.")
+        throw new Error("Timed out while waiting for Raven VPN to settle.")
     }
 
     return snapshot

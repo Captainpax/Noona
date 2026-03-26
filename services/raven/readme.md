@@ -28,14 +28,19 @@ state, and keeps the managed library in sync.
 - returns structured queue outcomes so callers can distinguish accepted queues from expired, invalid, or already-active
   selections
 - supports import checks and metadata-related library repair flows
+- only adds volume numbers to default chapter file names when Noona has an explicit chapter-to-volume map for that
+  chapter, otherwise keeping chapter-only names until metadata repair fills the map
 - refreshes cached PIA OpenVPN profiles atomically and keeps the last known-good profiles when an upstream archive
   refresh fails
 - establishes a baseline PIA tunnel automatically whenever VPN is enabled, even if auto-rotate is off
 - accepts manual `Rotate now` requests only after Raven has reserved the rotation and validated the active PIA
   settings, then completes the tunnel change in the background
+- accepts a dedicated disable/apply request that disconnects immediately when Raven is idle and queues that disable
+  behind the active rotation when Raven is already reconnecting
 - fresh-reads VPN settings for manual rotate validation, scheduler auto-connect, and VPN-gated download waits so a
   newly saved region, credential, or download gate change takes effect immediately instead of waiting for the normal
   settings cache window
+- keeps `enabled` separate from `onlyDownloadWhenVpnOn`, so turning VPN off does not silently clear the download gate
 - keeps phase-specific VPN transition failures in the returned/runtime error text and appends cleanup failures instead
   of overwriting the primary cause with a generic rotation error
 - treats auto-rotate as periodic re-rotation only; queued downloads waiting on VPN should start once Raven finishes the

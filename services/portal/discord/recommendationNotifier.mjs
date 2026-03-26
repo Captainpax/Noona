@@ -5,7 +5,7 @@
  * - clients/vaultClient.mjs
  * - tests/recommendationNotifier.test.mjs
  * - app/ravenTitleVolumeMap.mjs
- * Times this file has been edited: 8
+ * Times this file has been edited: 9
  */
 
 import {applyRavenTitleVolumeMap} from '../app/ravenTitleVolumeMap.mjs';
@@ -1307,7 +1307,7 @@ export const createRecommendationNotifier = ({
                         : ' Raven also stored the chapter-to-volume map.'
                 )
                 : volumeMap?.status === 'no-op'
-                    ? ' The matched provider did not expose usable chapter-to-volume coverage, so Raven kept fallback v01 file names.'
+                    ? ' The matched provider did not expose usable chapter-to-volume coverage, so Raven left the current chapter file naming unchanged.'
                     : '';
             const timelineEvent = createSystemTimelineEvent({
                 type: 'comment',

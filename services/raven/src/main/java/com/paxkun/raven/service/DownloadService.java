@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/service/settings/DownloadNamingSettings.java
  * - src/main/java/com/paxkun/raven/service/settings/DownloadVpnSettings.java
- * Times this file has been edited: 37
+ * Times this file has been edited: 38
  */
 package com.paxkun.raven.service;
 
@@ -55,6 +55,7 @@ public class DownloadService {
     private static final String EXECUTION_MODE_PROCESS = "process";
     private static final String DOWNLOADING_FOLDER_NAME = "downloading";
     private static final String DOWNLOADED_FOLDER_NAME = "downloaded";
+    private static final String DEFAULT_CHAPTER_ARCHIVE_TEMPLATE = "{title} c{chapter} (v{volume}) [Noona].cbz";
     private static final String TASK_COLLECTION = "raven_download_tasks";
     private static final String CURRENT_TASK_REDIS_KEY = "raven:download:current-task";
     private static final long VAULT_SNAPSHOT_WARNING_COOLDOWN_MS = TimeUnit.SECONDS.toMillis(30);
@@ -1657,11 +1658,17 @@ public class DownloadService {
      * Builds chapter archive name.
      *
      * @param title The Raven title.
-     * @param chapterNumber The chapter number.
-     * @param pageCount The page count.
-     * @param domain The domain.
-     * @return The resulting message or value.
-    */
+     * Builds the final CBZ name for a chapter using the current Raven naming settings.
+     *
+     * Raven only renders a volume token when the title has an explicit chapter-to-volume mapping
+     * for the requested chapter.
+     *
+     * @param title The Raven library title record.
+     * @param chapterNumber The source chapter number.
+     * @param pageCount The number of pages saved into the archive.
+     * @param domain The source domain used for the chapter pages.
+     * @return The sanitized archive file name.
+     */
 
     public String buildChapterArchiveName(NewTitle title, String chapterNumber, int pageCount, String domain) {
         return formatChapterCbzName(settingsService.getDownloadNamingSettings(), title, chapterNumber, pageCount, domain);
@@ -1677,12 +1684,13 @@ public class DownloadService {
         int chapterPad = naming != null && naming.getChapterPad() != null ? Math.max(1, naming.getChapterPad()) : 3;
         String chapterPadded = formatChapterPadded(chapter, chapterPad);
         int volumePad = naming != null && naming.getVolumePad() != null ? Math.max(1, naming.getVolumePad()) : 2;
-        int volumeNumber = resolveChapterVolumeNumber(titleRecord, chapterNumber);
+        Integer volumeNumber = resolveMappedChapterVolumeNumber(titleRecord, chapterNumber);
         String volumePadded = formatVolumePadded(volumeNumber, volumePad);
 
         String template = naming != null ? naming.getChapterTemplate() : null;
+        boolean useDefaultTemplate = isDefaultChapterArchiveTemplate(template);
         if (template == null || template.isBlank()) {
-            template = "{title} c{chapter} (v{volume}) [Noona].cbz";
+            template = DEFAULT_CHAPTER_ARCHIVE_TEMPLATE;
         }
 
         Map<String, String> values = new HashMap<>();
@@ -1696,11 +1704,11 @@ public class DownloadService {
         values.put("pages", String.valueOf(pageCount));
         values.put("domain", domain != null ? domain : "");
 
-        String raw = applyTemplate(template, values);
+        String raw = useDefaultTemplate
+                ? buildDefaultChapterArchiveName(title, chapterPadded, volumePadded)
+                : applyTemplate(template, values);
         if (raw == null || raw.isBlank()) {
-            raw = title.isBlank()
-                    ? String.format("c%s (v%s) [Noona].cbz", chapterPadded, volumePadded)
-                    : String.format("%s c%s (v%s) [Noona].cbz", title, chapterPadded, volumePadded);
+            raw = buildDefaultChapterArchiveName(title, chapterPadded, volumePadded);
         }
 
         String withExt = raw.trim();
@@ -1729,7 +1737,7 @@ public class DownloadService {
         int chapterPad = naming != null && naming.getChapterPad() != null ? Math.max(1, naming.getChapterPad()) : 3;
         String chapterPadded = formatChapterPadded(chapter, chapterPad);
         int volumePad = naming != null && naming.getVolumePad() != null ? Math.max(1, naming.getVolumePad()) : 2;
-        int volumeNumber = resolveChapterVolumeNumber(titleRecord, chapterNumber);
+        Integer volumeNumber = resolveMappedChapterVolumeNumber(titleRecord, chapterNumber);
         String volumePadded = formatVolumePadded(volumeNumber, volumePad);
 
         String template = naming != null ? naming.getPageTemplate() : null;
@@ -1789,18 +1797,29 @@ public class DownloadService {
         }
     }
 
-    private String formatVolumePadded(int volumeNumber, int width) {
-        return String.format("%0" + Math.max(1, width) + "d", Math.max(1, volumeNumber));
+    private String formatVolumePadded(Integer volumeNumber, int width) {
+        if (volumeNumber == null || volumeNumber < 1) {
+            return "";
+        }
+
+        return String.format("%0" + Math.max(1, width) + "d", volumeNumber);
     }
 
-    private int resolveChapterVolumeNumber(NewTitle titleRecord, String chapterNumber) {
+    /**
+     * Resolves an explicit chapter-to-volume mapping for a chapter.
+     *
+     * @param titleRecord   The Raven title record that may hold a chapter volume map.
+     * @param chapterNumber The chapter number being named.
+     * @return The mapped volume number, or {@code null} when Raven has no explicit mapping.
+     */
+    private Integer resolveMappedChapterVolumeNumber(NewTitle titleRecord, String chapterNumber) {
         if (titleRecord == null || titleRecord.getChapterVolumeMap() == null || titleRecord.getChapterVolumeMap().isEmpty()) {
-            return 1;
+            return null;
         }
 
         String normalizedChapter = normalizeChapterNumber(chapterNumber);
         if (normalizedChapter == null || normalizedChapter.isBlank()) {
-            return 1;
+            return null;
         }
 
         Integer directMatch = titleRecord.getChapterVolumeMap().get(normalizedChapter);
@@ -1819,7 +1838,37 @@ public class DownloadService {
             }
         }
 
-        return 1;
+        return null;
+    }
+
+    /**
+     * Builds Raven's built-in default chapter archive name.
+     *
+     * @param title         The title label.
+     * @param chapterPadded The padded chapter number.
+     * @param volumePadded  The padded volume number, or blank when Raven has no explicit mapping.
+     * @return The default chapter archive name without forced extension sanitization.
+     */
+    private String buildDefaultChapterArchiveName(String title, String chapterPadded, String volumePadded) {
+        boolean hasVolume = volumePadded != null && !volumePadded.isBlank();
+        if (title == null || title.isBlank()) {
+            return hasVolume
+                    ? String.format("c%s (v%s) [Noona].cbz", chapterPadded, volumePadded)
+                    : String.format("c%s [Noona].cbz", chapterPadded);
+        }
+
+        return hasVolume
+                ? String.format("%s c%s (v%s) [Noona].cbz", title, chapterPadded, volumePadded)
+                : String.format("%s c%s [Noona].cbz", title, chapterPadded);
+    }
+
+    private boolean isDefaultChapterArchiveTemplate(String template) {
+        if (template == null) {
+            return true;
+        }
+
+        String trimmed = template.trim();
+        return trimmed.isBlank() || DEFAULT_CHAPTER_ARCHIVE_TEMPLATE.equals(trimmed);
     }
 
     private String applyTemplate(String template, Map<String, String> values) {

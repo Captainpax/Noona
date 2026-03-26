@@ -118,6 +118,12 @@ const createRavenStub = (overrides = {}) => ({
     async rotateVpnNowDetailed() {
         throw new Error('rotateVpnNowDetailed should not be called')
     },
+    async disableVpnNow() {
+        throw new Error('disableVpnNow should not be called')
+    },
+    async disableVpnNowDetailed() {
+        throw new Error('disableVpnNowDetailed should not be called')
+    },
     async testVpnLogin() {
         throw new Error('testVpnLogin should not be called')
     },
@@ -8228,6 +8234,322 @@ test('settings VPN save route preserves Raven failure status after settings pers
     assert.equal(stored.region, 'us_texas')
     assert.equal(stored.piaUsername, 'updated-user')
     assert.equal(stored.piaPassword, 'updated-secret')
+})
+
+test('settings VPN save route queues disable while Raven is still rotating', async (t) => {
+    const vault = createVaultAuthStub({
+        settings: [{
+            key: 'downloads.vpn',
+            provider: 'pia',
+            enabled: true,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: true,
+            rotateEveryMinutes: 30,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: 'saved-secret',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+    })
+    const disableCalls = []
+    let statusCalls = 0
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        ravenClient: createRavenStub({
+            async getVpnStatus() {
+                statusCalls += 1
+                return {
+                    connected: true,
+                    rotating: true,
+                    connectionState: 'connecting',
+                }
+            },
+            async disableVpnNowDetailed(triggeredBy) {
+                disableCalls.push(triggeredBy)
+                return {
+                    status: 202,
+                    payload: {
+                        ok: true,
+                        message: 'VPN disable queued until the active rotation finishes.',
+                    },
+                }
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const putRes = await fetch(`${baseUrl}/api/settings/downloads/vpn`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            enabled: false,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: true,
+            rotateEveryMinutes: 30,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: '********',
+            applyNow: true,
+            triggeredBy: 'moon-settings',
+        }),
+    })
+
+    assert.equal(putRes.status, 200)
+    const putPayload = await putRes.json()
+    assert.equal(putPayload.applyTriggered, true)
+    assert.equal(putPayload.enabled, false)
+    assert.equal(putPayload.onlyDownloadWhenVpnOn, true)
+    assert.equal(statusCalls, 1)
+    assert.deepEqual(disableCalls, ['moon-settings'])
+
+    const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.vpn')
+    assert.ok(stored)
+    assert.equal(stored.enabled, false)
+    assert.equal(stored.onlyDownloadWhenVpnOn, true)
+    assert.equal(stored.piaPassword, 'saved-secret')
+})
+
+test('settings VPN save route applies disable immediately while Raven is connected', async (t) => {
+    const vault = createVaultAuthStub({
+        settings: [{
+            key: 'downloads.vpn',
+            provider: 'pia',
+            enabled: true,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: true,
+            rotateEveryMinutes: 30,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: 'saved-secret',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+    })
+    const disableCalls = []
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        ravenClient: createRavenStub({
+            async getVpnStatus() {
+                return {
+                    connected: true,
+                    rotating: false,
+                    connectionState: 'connected',
+                }
+            },
+            async disableVpnNowDetailed(triggeredBy) {
+                disableCalls.push(triggeredBy)
+                return {
+                    status: 200,
+                    payload: {
+                        ok: true,
+                        message: 'VPN disabled.',
+                    },
+                }
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const putRes = await fetch(`${baseUrl}/api/settings/downloads/vpn`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            enabled: false,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: false,
+            rotateEveryMinutes: 45,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: '********',
+            applyNow: true,
+            triggeredBy: 'moon-settings',
+        }),
+    })
+
+    assert.equal(putRes.status, 200)
+    const putPayload = await putRes.json()
+    assert.equal(putPayload.applyTriggered, true)
+    assert.equal(putPayload.enabled, false)
+    assert.deepEqual(disableCalls, ['moon-settings'])
+
+    const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.vpn')
+    assert.ok(stored)
+    assert.equal(stored.enabled, false)
+    assert.equal(stored.onlyDownloadWhenVpnOn, true)
+    assert.equal(stored.autoRotate, false)
+    assert.equal(stored.rotateEveryMinutes, 45)
+})
+
+test('settings VPN save route skips disable apply when Raven is already disabled', async (t) => {
+    const vault = createVaultAuthStub({
+        settings: [{
+            key: 'downloads.vpn',
+            provider: 'pia',
+            enabled: true,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: true,
+            rotateEveryMinutes: 30,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: 'saved-secret',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+    })
+    const disableCalls = []
+    let statusCalls = 0
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        ravenClient: createRavenStub({
+            async getVpnStatus() {
+                statusCalls += 1
+                return {
+                    connected: false,
+                    rotating: false,
+                    connectionState: 'disabled',
+                }
+            },
+            async disableVpnNowDetailed(triggeredBy) {
+                disableCalls.push(triggeredBy)
+                return {
+                    status: 200,
+                    payload: {
+                        ok: true,
+                        message: 'VPN disabled.',
+                    },
+                }
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const putRes = await fetch(`${baseUrl}/api/settings/downloads/vpn`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            enabled: false,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: true,
+            rotateEveryMinutes: 30,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: '********',
+            applyNow: true,
+            triggeredBy: 'moon-settings',
+        }),
+    })
+
+    assert.equal(putRes.status, 200)
+    const putPayload = await putRes.json()
+    assert.equal(putPayload.applyTriggered, false)
+    assert.equal(statusCalls, 1)
+    assert.deepEqual(disableCalls, [])
+
+    const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.vpn')
+    assert.ok(stored)
+    assert.equal(stored.enabled, false)
+    assert.equal(stored.onlyDownloadWhenVpnOn, true)
+})
+
+test('settings VPN save route preserves Raven disable failure status after settings persist', async (t) => {
+    const vault = createVaultAuthStub({
+        settings: [{
+            key: 'downloads.vpn',
+            provider: 'pia',
+            enabled: true,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: true,
+            rotateEveryMinutes: 30,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: 'saved-secret',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+    })
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        ravenClient: createRavenStub({
+            async getVpnStatus() {
+                return {
+                    connected: true,
+                    rotating: false,
+                    connectionState: 'connected',
+                }
+            },
+            async disableVpnNowDetailed() {
+                return {
+                    status: 409,
+                    payload: {
+                        ok: false,
+                        error: 'Cannot disable Raven VPN while a VPN login test is in progress.',
+                        message: 'Cannot disable Raven VPN while a VPN login test is in progress.',
+                    },
+                }
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const putRes = await fetch(`${baseUrl}/api/settings/downloads/vpn`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            enabled: false,
+            onlyDownloadWhenVpnOn: true,
+            autoRotate: true,
+            rotateEveryMinutes: 30,
+            region: 'us_california',
+            piaUsername: 'saved-user',
+            piaPassword: '********',
+            applyNow: true,
+            triggeredBy: 'moon-settings',
+        }),
+    })
+
+    assert.equal(putRes.status, 409)
+    const putPayload = await putRes.json()
+    assert.equal(putPayload.applyTriggered, true)
+    assert.equal(putPayload.error, 'Cannot disable Raven VPN while a VPN login test is in progress.')
+    assert.equal(putPayload.enabled, false)
+
+    const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.vpn')
+    assert.ok(stored)
+    assert.equal(stored.enabled, false)
+    assert.equal(stored.onlyDownloadWhenVpnOn, true)
 })
 
 test('settings VPN routes proxy region list and persist rotate drafts before Raven actions', async (t) => {

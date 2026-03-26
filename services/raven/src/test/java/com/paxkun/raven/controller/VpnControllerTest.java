@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/VPNServices.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnLoginTestResult.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnRegionOption.java
- * Times this file has been edited: 3
+ * Times this file has been edited: 4
  */
 package com.paxkun.raven.controller;
 
@@ -137,6 +137,54 @@ class VpnControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.ok").value(false))
                 .andExpect(jsonPath("$.message").value("A VPN rotation is already in progress."));
+    }
+
+    @Test
+    void disableEndpointReturnsAcceptedWhenDisableIsQueued() throws Exception {
+        when(vpnServices.disableNow(eq("manual"))).thenReturn(new VpnRotationResult(
+                true,
+                "VPN disable queued until the active rotation finishes.",
+                "198.51.100.10",
+                "198.51.100.10",
+                "us_california",
+                0,
+                0,
+                "manual",
+                "2026-03-08T20:30:00Z"
+        ));
+
+        mockMvc.perform(post("/v1/vpn/disable")
+                        .contentType("application/json")
+                        .content("{}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.message").value("VPN disable queued until the active rotation finishes."));
+
+        verify(vpnServices).disableNow(eq("manual"));
+    }
+
+    @Test
+    void disableEndpointReturnsOkWhenVpnIsDisabledImmediately() throws Exception {
+        when(vpnServices.disableNow(eq("manual"))).thenReturn(new VpnRotationResult(
+                true,
+                "VPN disabled.",
+                "198.51.100.10",
+                null,
+                "us_california",
+                0,
+                0,
+                "manual",
+                "2026-03-08T20:30:00Z"
+        ));
+
+        mockMvc.perform(post("/v1/vpn/disable")
+                        .contentType("application/json")
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.message").value("VPN disabled."));
+
+        verify(vpnServices).disableNow(eq("manual"));
     }
 
     @Test

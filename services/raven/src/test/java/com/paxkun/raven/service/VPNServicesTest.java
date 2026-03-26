@@ -1,11 +1,11 @@
 /**
- * Covers v p n services behavior.
+ * Covers VPN services behavior.
  * Related files:
  * - src/main/java/com/paxkun/raven/service/settings/DownloadVpnSettings.java
  * - src/main/java/com/paxkun/raven/service/settings/SettingsService.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnRotationResult.java
  * - src/main/java/com/paxkun/raven/service/VPNServices.java
- * Times this file has been edited: 7
+ * Times this file has been edited: 8
  */
 package com.paxkun.raven.service;
 
@@ -51,7 +51,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Covers v p n services behavior.
+ * Covers VPN services behavior.
  */
 
 @ExtendWith(MockitoExtension.class)
@@ -194,6 +194,84 @@ class VPNServicesTest {
         assertThat(result.message()).isEqualTo("VPN is disabled in Raven settings.");
         verify(downloadService, never()).beginMaintenancePause(anyString());
         verify(downloadService, never()).requestPauseActiveDownloads();
+    }
+
+    @Test
+    void disableNowDisconnectsOpenVpnImmediatelyAndClearsSchedules() throws Exception {
+        VPNServices vpnServices = spy(new VPNServices(settingsService, downloadService, loggerService));
+        Process openVpnProcess = mock(Process.class);
+
+        when(openVpnProcess.isAlive()).thenReturn(true);
+        when(openVpnProcess.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(true);
+        ReflectionTestUtils.setField(vpnServices, "openVpnProcess", openVpnProcess);
+        ReflectionTestUtils.setField(vpnServices, "connectionState", "connected");
+        ReflectionTestUtils.setField(vpnServices, "currentPublicIp", "198.51.100.12");
+        ReflectionTestUtils.setField(vpnServices, "nextRotationAtMs", System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(5));
+        ReflectionTestUtils.setField(vpnServices, "nextRotationAtIso", "2026-03-08T20:30:00Z");
+        ReflectionTestUtils.setField(vpnServices, "nextAutoConnectAttemptAtMs", System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(1));
+
+        VpnRotationResult result = vpnServices.disableNow("manual");
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.message()).isEqualTo("VPN disabled.");
+        assertThat(vpnServices.getStatus().isConnected()).isFalse();
+        assertThat(vpnServices.getStatus().getConnectionState()).isEqualTo("disabled");
+        assertThat(vpnServices.getStatus().getPublicIp()).isNull();
+        assertThat(vpnServices.getStatus().getNextRotationAt()).isNull();
+        verify(openVpnProcess).destroy();
+    }
+
+    @Test
+    void disableNowQueuesBehindActiveRotationAndLeavesRavenDisabled() throws Exception {
+        VPNServices vpnServices = spy(new VPNServices(settingsService, downloadService, loggerService));
+        List<String> preservedRoutes = List.of("172.18.0.0/16 dev eth0 proto kernel scope link src 172.18.0.2");
+        AtomicBoolean vpnEnabled = new AtomicBoolean(true);
+        AtomicBoolean maintenancePauseStarted = new AtomicBoolean(false);
+        Process openVpnProcess = mock(Process.class);
+
+        when(openVpnProcess.isAlive()).thenReturn(true);
+        when(openVpnProcess.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(true);
+        when(settingsService.getDownloadVpnSettingsFresh()).thenAnswer(invocation ->
+                vpnEnabled.get()
+                        ? enabledVpnSettings("us_california", true, true)
+                        : disabledVpnSettings("us_california", true)
+        );
+        doAnswer(invocation -> {
+            maintenancePauseStarted.set(true);
+            return null;
+        }).when(downloadService).beginMaintenancePause(anyString());
+        when(downloadService.requestPauseActiveDownloads()).thenReturn(new DownloadService.PauseRequestResult(List.of("Solo Leveling"), List.of()));
+        when(downloadService.waitForNoActiveDownloads(any())).thenAnswer(invocation -> {
+            Thread.sleep(200L);
+            return true;
+        });
+        when(downloadService.resumePausedDownloads(eq(List.of("Solo Leveling")))).thenReturn(1);
+        doReturn(preservedRoutes).when(vpnServices).captureLocalRouteSpecs();
+        doAnswer(invocation -> {
+            ReflectionTestUtils.setField(vpnServices, "openVpnProcess", openVpnProcess);
+            ReflectionTestUtils.setField(vpnServices, "connectionState", "connected");
+            return null;
+        }).when(vpnServices).connectOpenVpn("us_california", "pia-user", "pia-secret");
+        doNothing().when(vpnServices).restoreLocalRouteSpecs(preservedRoutes);
+        doReturn("198.51.100.12").when(vpnServices).resolvePublicIp();
+
+        VpnRotationResult rotation = vpnServices.rotateNow("manual");
+        waitForCondition("Timed out waiting for queued disable rotation to enter maintenance pause.", maintenancePauseStarted::get);
+        vpnEnabled.set(false);
+        VpnRotationResult disable = vpnServices.disableNow("manual");
+
+        assertThat(rotation.ok()).isTrue();
+        assertThat(disable.ok()).isTrue();
+        assertThat(disable.message()).contains("queued");
+
+        waitForCondition("Timed out waiting for queued VPN disable to finish.", () -> !vpnServices.getStatus().isRotating());
+        assertThat(vpnServices.getStatus().isEnabled()).isFalse();
+        assertThat(vpnServices.getStatus().isConnected()).isFalse();
+        assertThat(vpnServices.getStatus().getConnectionState()).isEqualTo("disabled");
+        assertThat(vpnServices.getStatus().getNextRotationAt()).isNull();
+        assertThat(settingsService.getDownloadVpnSettingsFresh().getOnlyDownloadWhenVpnOn()).isTrue();
+        verify(openVpnProcess, atLeastOnce()).destroy();
+        vpnServices.stop();
     }
 
     @Test
@@ -623,6 +701,27 @@ class VPNServicesTest {
      */
     private DownloadVpnSettings enabledVpnSettings(String region) {
         return enabledVpnSettings(region, false, false);
+    }
+
+    /**
+     * Creates a disabled Raven VPN settings snapshot without clearing the download gate flag.
+     *
+     * @param region                The configured Raven VPN region.
+     * @param onlyDownloadWhenVpnOn Whether Raven should keep the download gate enabled.
+     * @return The disabled VPN settings snapshot.
+     */
+    private DownloadVpnSettings disabledVpnSettings(String region, boolean onlyDownloadWhenVpnOn) {
+        return new DownloadVpnSettings(
+                "downloads.vpn",
+                "pia",
+                false,
+                onlyDownloadWhenVpnOn,
+                false,
+                30,
+                region,
+                "pia-user",
+                "pia-secret"
+        );
     }
 
     /**

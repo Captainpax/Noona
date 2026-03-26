@@ -64,8 +64,9 @@ recommendations, and the day-to-day admin UI.
 - treats Raven download queue attempts as successful only when Raven explicitly accepts them, so expired or invalid
   search selections stay visible as real errors
 - keeps the Raven VPN panel locked while Raven reports rotating or connecting, tracks unsaved VPN draft changes against
-  the last loaded snapshot, sends `Save VPN` with an immediate-apply request for connection-affecting edits, and polls
-  until Raven settles whenever that apply path actually reconnects
+  the last loaded snapshot, leaves only the enable-off path available while Raven is still busy, sends `Save VPN` with
+  an immediate-apply request for connection-affecting edits, and polls until Raven settles whenever that apply path
+  actually reconnects or disables the tunnel
 - sends `Rotate now` with the current on-screen VPN draft first so unsaved region or credential edits are saved before
   Raven reconnects, prefers Raven's final detailed rotation failure once polling finishes, and shows the final
   login-test result instead of a background-start acknowledgement

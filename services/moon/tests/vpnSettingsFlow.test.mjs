@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
     areVpnDraftsEqual,
+    buildVpnDisableOnlySaveRequestBody,
     buildVpnRotateRequestBody,
     buildVpnSaveRequestBody,
+    canSubmitVpnDisableWhileBusy,
     createVpnDraftSnapshot,
+    formatVpnDisableOutcomeMessage,
     formatVpnLoginOutcomeMessage,
     formatVpnRotationOutcomeMessage,
     hasVpnSettingsSnapshot,
@@ -20,6 +23,18 @@ test("vpn controls stay locked while Raven reports connecting or rotating", () =
     assert.equal(shouldDisableVpnControls({status: {rotating: true}}), true);
     assert.equal(shouldDisableVpnControls({status: {connectionState: "connected"}}), false);
     assert.equal(isVpnRuntimeBusy({connectionState: "rotating"}), true);
+    assert.equal(canSubmitVpnDisableWhileBusy({
+        status: {rotating: true},
+        rotating: true,
+        currentDraft: {enabled: false},
+        persistedDraft: {enabled: true},
+    }), true);
+    assert.equal(canSubmitVpnDisableWhileBusy({
+        status: {rotating: true},
+        rotating: true,
+        currentDraft: {enabled: true},
+        persistedDraft: {enabled: true},
+    }), false);
 });
 
 test("vpn message can survive a follow-up refresh when requested", () => {
@@ -93,6 +108,13 @@ test("vpn request builders send the current draft for save and rotate actions", 
         piaPassword: "fresh-secret",
         triggeredBy: "moon-settings",
     });
+    assert.deepEqual(buildVpnDisableOnlySaveRequestBody({
+        triggeredBy: "moon-settings",
+    }), {
+        enabled: false,
+        applyNow: true,
+        triggeredBy: "moon-settings",
+    });
 });
 
 test("vpn settings payload detection ignores pure error payloads", () => {
@@ -132,6 +154,24 @@ test("vpn rotation outcome messages reflect success and failure", () => {
             lastError: "OpenVPN did not complete initialization in time.",
         }),
         "VPN rotation failed: OpenVPN did not complete initialization in time.",
+    );
+});
+
+test("vpn disable outcome messages stay disable-specific", () => {
+    assert.equal(
+        formatVpnDisableOutcomeMessage({
+            enabled: false,
+            connectionState: "disabled",
+        }),
+        "VPN disabled.",
+    );
+    assert.equal(
+        formatVpnDisableOutcomeMessage({
+            enabled: false,
+            connectionState: "error",
+            lastError: "disable cleanup failed",
+        }),
+        "VPN disable failed: disable cleanup failed",
     );
 });
 

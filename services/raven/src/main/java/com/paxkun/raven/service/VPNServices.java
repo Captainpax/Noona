@@ -1,11 +1,11 @@
 /**
- * Manages Raven VPN startup, status, rotation, and login testing.
+ * Manages Raven VPN startup, status, rotation, disable, and login testing.
  * Related files:
  * - src/main/java/com/paxkun/raven/service/settings/DownloadVpnSettings.java
  * - src/main/java/com/paxkun/raven/service/settings/SettingsService.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnLoginTestResult.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnRegionOption.java
- * Times this file has been edited: 9
+ * Times this file has been edited: 10
  */
 package com.paxkun.raven.service;
 
@@ -44,7 +44,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Manages Raven VPN connectivity and scheduled IP rotations.
+ * Manages Raven VPN connectivity, disable flow, and scheduled IP rotations.
  * The implementation currently targets PIA OpenVPN profiles.
  */
 @Service
@@ -80,6 +80,7 @@ public class VPNServices {
     });
     private final AtomicBoolean rotationInProgress = new AtomicBoolean(false);
     private final AtomicBoolean loginTestInProgress = new AtomicBoolean(false);
+    private final AtomicBoolean disablePendingAfterRotation = new AtomicBoolean(false);
     private final Object openVpnLock = new Object();
     private final Object profileRefreshLock = new Object();
     @Value("${raven.vpn.pia.openvpnZipUrl:${RAVEN_PIA_OPENVPN_ZIP_URL:https://www.privateinternetaccess.com/openvpn/openvpn-ip.zip}}")
@@ -271,6 +272,66 @@ public class VPNServices {
     }
 
     /**
+     * Applies Raven's disabled VPN state immediately or queues it behind the active rotation.
+     *
+     * @param triggeredBy The source that requested the disable action.
+     * @return The resulting VPN action payload.
+     */
+    public VpnRotationResult disableNow(String triggeredBy) {
+        String sanitizedTrigger = Optional.ofNullable(triggeredBy).filter(s -> !s.isBlank()).orElse("manual");
+        String actionAt = Instant.now().toString();
+        String previousIp = currentPublicIp;
+        String activeRegion = Optional.ofNullable(currentRegion).filter(region -> !region.isBlank()).orElse(DEFAULT_REGION);
+
+        if (rotationInProgress.get()) {
+            disablePendingAfterRotation.set(true);
+            nextRotationAtMs = 0L;
+            nextRotationAtIso = null;
+            clearAutoConnectRetrySchedule();
+            return new VpnRotationResult(
+                    true,
+                    "VPN disable queued until the active rotation finishes.",
+                    previousIp,
+                    currentPublicIp,
+                    activeRegion,
+                    0,
+                    0,
+                    sanitizedTrigger,
+                    actionAt
+            );
+        }
+
+        disablePendingAfterRotation.set(false);
+        if (!isOpenVpnRunning() && "disabled".equalsIgnoreCase(connectionState)) {
+            applyDisabledRuntimeState();
+            return new VpnRotationResult(
+                    true,
+                    "VPN already disabled.",
+                    previousIp,
+                    currentPublicIp,
+                    activeRegion,
+                    0,
+                    0,
+                    sanitizedTrigger,
+                    actionAt
+            );
+        }
+
+        applyDisabledRuntimeState();
+        return new VpnRotationResult(
+                true,
+                "VPN disabled.",
+                previousIp,
+                currentPublicIp,
+                activeRegion,
+                0,
+                0,
+                sanitizedTrigger,
+                actionAt
+        );
+    }
+
+    /**
      * Tests login.
      *
      * @param triggeredBy The triggered by.
@@ -429,14 +490,7 @@ public class VPNServices {
             long now = System.currentTimeMillis();
 
             if (!enabled) {
-                nextRotationAtMs = 0L;
-                nextRotationAtIso = null;
-                clearAutoConnectRetrySchedule();
-                if (isOpenVpnRunning() || !"disabled".equalsIgnoreCase(connectionState)) {
-                    disconnectOpenVpn();
-                    connectionState = "disabled";
-                    currentPublicIp = null;
-                }
+                applyDisabledRuntimeState();
                 return;
             }
 
@@ -628,9 +682,32 @@ public class VPNServices {
             currentPublicIp = resolvePublicIp();
             connectionState = "connected";
             clearAutoConnectRetrySchedule();
+            logger.info(VPN_TAG, "Re-applied " + preservedLocalRoutes.size() + " local route(s) after VPN connect.");
+
+            if (shouldApplyDisabledStateAfterCurrentTransition()) {
+                failureStage = "disconnecting OpenVPN after queued disable";
+                applyDisabledRuntimeState();
+                failureStage = "resuming paused downloads";
+                resumedTasks = downloadService.resumePausedDownloads(pauseResult.affectedTitles());
+                failureStage = "ending maintenance pause";
+                downloadService.endMaintenancePause(maintenanceReason + " complete");
+                maintenancePauseActive = false;
+
+                return new VpnRotationResult(
+                        true,
+                        "VPN disabled.",
+                        previousIp,
+                        currentPublicIp,
+                        currentRegion,
+                        pauseResult.getAffectedTasks(),
+                        resumedTasks,
+                        triggeredBy,
+                        Instant.now().toString()
+                );
+            }
+
             clearRuntimeError();
             lastRotationAtIso = Instant.now().toString();
-            logger.info(VPN_TAG, "Re-applied " + preservedLocalRoutes.size() + " local route(s) after VPN connect.");
 
             failureStage = "resuming paused downloads";
             resumedTasks = downloadService.resumePausedDownloads(pauseResult.affectedTitles());
@@ -692,6 +769,9 @@ public class VPNServices {
                 failureMessage = appendVpnTransitionFailureDetail(failureMessage, cleanupMessage);
             }
             setRuntimeError(failureMessage);
+            if (shouldApplyDisabledStateAfterCurrentTransition()) {
+                applyDisabledRuntimeState();
+            }
             return new VpnRotationResult(
                     false,
                     failureMessage,
@@ -704,6 +784,7 @@ public class VPNServices {
                     Instant.now().toString()
             );
         } finally {
+            disablePendingAfterRotation.set(false);
             rotationInProgress.set(false);
         }
     }
@@ -766,6 +847,40 @@ public class VPNServices {
             return base;
         }
         return base + " " + normalizedDetail;
+    }
+
+    /**
+     * Applies Raven's disabled runtime state without mutating the persisted VPN gate settings.
+     */
+    private void applyDisabledRuntimeState() {
+        nextRotationAtMs = 0L;
+        nextRotationAtIso = null;
+        clearAutoConnectRetrySchedule();
+        disablePendingAfterRotation.set(false);
+        if (isOpenVpnRunning() || !"disabled".equalsIgnoreCase(connectionState)) {
+            disconnectOpenVpn();
+        }
+        connectionState = "disabled";
+        currentPublicIp = null;
+    }
+
+    /**
+     * Indicates whether the current transition should end with Raven disabled instead of connected.
+     *
+     * @return {@code true} when a queued disable or freshly saved disabled settings should win.
+     */
+    private boolean shouldApplyDisabledStateAfterCurrentTransition() {
+        if (disablePendingAfterRotation.get()) {
+            return true;
+        }
+
+        try {
+            return !Boolean.TRUE.equals(getLiveVpnSettings().getEnabled());
+        } catch (Exception e) {
+            logger.debug(VPN_TAG, "Failed to re-read VPN settings while checking queued disable: "
+                    + sanitizeForLog(e.getMessage()));
+            return false;
+        }
     }
 
     /**

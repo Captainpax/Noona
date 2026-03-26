@@ -58,9 +58,12 @@ import {
 import {CPU_CORE_UNPINNED, normalizeCpuCoreIdDrafts} from "./downloadWorkerSettings.mjs";
 import {
     areVpnDraftsEqual,
+    buildVpnDisableOnlySaveRequestBody,
     buildVpnRotateRequestBody,
     buildVpnSaveRequestBody,
+    canSubmitVpnDisableWhileBusy,
     createVpnDraftSnapshot,
+    formatVpnDisableOutcomeMessage,
     formatVpnLoginOutcomeMessage,
     formatVpnRotationOutcomeMessage,
     hasVpnSettingsSnapshot,
@@ -973,6 +976,7 @@ type SettingsPageProps = {
 export function SettingsPage({selection}: SettingsPageProps) {
     const router = useRouter();
     const setupConfigInputRef = useRef<HTMLInputElement | null>(null);
+    const vpnActionSequenceRef = useRef(0);
     const activeTab = selection.tab;
     const activeView: ViewId = selection.view;
     const activeNavSection: NavSectionId = selection.navSection;
@@ -1057,6 +1061,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const [vpnRegions, setVpnRegions] = useState<VpnRegionOption[]>([]);
     const [vpnStatus, setVpnStatus] = useState<VpnRuntimeStatus | null>(null);
     const [vpnPersistedDraft, setVpnPersistedDraft] = useState<VpnDraftSnapshot | null>(null);
+    const [vpnPendingDisableIntent, setVpnPendingDisableIntent] = useState(false);
 
     const [collectionsLoading, setCollectionsLoading] = useState(false);
     const [collectionsError, setCollectionsError] = useState<string | null>(null);
@@ -2084,6 +2089,13 @@ export function SettingsPage({selection}: SettingsPageProps) {
         passwordConfigured: vpnPasswordConfigured,
     });
 
+    const beginVpnAction = () => {
+        vpnActionSequenceRef.current += 1;
+        return vpnActionSequenceRef.current;
+    };
+
+    const isLatestVpnAction = (token: number) => vpnActionSequenceRef.current === token;
+
     const applyVpnSettingsSnapshot = (
         json: DownloadVpnSettings | null,
         {preserveMessage = false}: { preserveMessage?: boolean } = {},
@@ -2098,8 +2110,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
             piaPassword: "",
             passwordConfigured: json?.passwordConfigured === true,
         });
+        const preservePendingDisableIntent = vpnPendingDisableIntent && normalizedSnapshot.enabled !== false;
         setVpnMessage((current) => resolveVpnMessageAfterRefresh(current, preserveMessage));
-        setVpnEnabled(normalizedSnapshot.enabled);
+        setVpnEnabled(preservePendingDisableIntent ? false : normalizedSnapshot.enabled);
         setVpnOnlyDownloadWhenOn(normalizedSnapshot.onlyDownloadWhenVpnOn);
         setVpnAutoRotate(normalizedSnapshot.autoRotate);
         setVpnRotateEveryMinutes(
@@ -2116,6 +2129,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
         setVpnUpdatedAt(normalizeString(json?.updatedAt).trim() || null);
         setVpnStatus(json?.status ?? null);
         setVpnPersistedDraft(normalizedSnapshot);
+        if (!preservePendingDisableIntent) {
+            setVpnPendingDisableIntent(false);
+        }
         if (Array.isArray(json?.regions)) {
             setVpnRegions(json?.regions ?? []);
         }
@@ -2156,13 +2172,32 @@ export function SettingsPage({selection}: SettingsPageProps) {
     };
 
     const saveVpnSettings = async () => {
+        const actionToken = beginVpnAction();
         setVpnSaving(true);
         setVpnError(null);
         setVpnMessage(null);
         try {
             const currentDraft = buildCurrentVpnDraftSnapshot();
             const hadUnsavedChanges = !areVpnDraftsEqual(currentDraft, vpnPersistedDraft);
-            if (currentDraft.rotateEveryMinutes == null || currentDraft.rotateEveryMinutes < 1) {
+            const disableOnlyWhileBusy = canSubmitVpnDisableWhileBusy({
+                status: vpnStatus,
+                loading: vpnLoading,
+                saving: vpnSaving,
+                rotating: vpnRotating,
+                testing: vpnTesting,
+                currentDraft,
+                persistedDraft: vpnPersistedDraft,
+            });
+            const isDisableRequest = currentDraft.enabled === false && vpnPersistedDraft?.enabled === true;
+            const disableTouchedAdditionalSettings =
+                isDisableRequest
+                && !disableOnlyWhileBusy
+                && vpnPersistedDraft != null
+                && !areVpnDraftsEqual(currentDraft, {
+                    ...vpnPersistedDraft,
+                    enabled: currentDraft.enabled,
+                });
+            if (!disableOnlyWhileBusy && (currentDraft.rotateEveryMinutes == null || currentDraft.rotateEveryMinutes < 1)) {
                 setVpnError("Rotation interval must be a positive number of minutes.");
                 return;
             }
@@ -2170,15 +2205,24 @@ export function SettingsPage({selection}: SettingsPageProps) {
             const res = await fetch("/api/noona/settings/downloads/vpn", {
                 method: "PUT",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify(buildVpnSaveRequestBody({
-                    draft: currentDraft,
-                    applyNow: true,
-                    triggeredBy: "moon-settings",
-                })),
+                body: JSON.stringify(
+                    disableOnlyWhileBusy
+                        ? buildVpnDisableOnlySaveRequestBody({
+                            triggeredBy: "moon-settings",
+                        })
+                        : buildVpnSaveRequestBody({
+                            draft: currentDraft,
+                            applyNow: true,
+                            triggeredBy: "moon-settings",
+                        }),
+                ),
             });
             const json = (await res.json().catch(() => null)) as DownloadVpnSettings | null;
             if (hasVpnSettingsSnapshot(json)) {
                 applyVpnSettingsSnapshot(json, {preserveMessage: true});
+            }
+            if (!isLatestVpnAction(actionToken)) {
+                return;
             }
             if (!res.ok) {
                 if (hasVpnSettingsSnapshot(json)) {
@@ -2193,12 +2237,23 @@ export function SettingsPage({selection}: SettingsPageProps) {
                     refresh: () => refreshVpnSettings({preserveMessage: true}),
                     isBusy: (snapshot) => isVpnRuntimeBusy(snapshot?.status),
                 });
+                if (!isLatestVpnAction(actionToken)) {
+                    return;
+                }
                 await loadVpnRegions();
                 const finalStatus = finalVpnSettings?.status ?? null;
                 const finalError = normalizeString(finalStatus?.lastError).trim();
                 if (finalError) {
                     setVpnError(finalError);
                     setVpnMessage(null);
+                    return;
+                }
+
+                if (isDisableRequest) {
+                    setVpnMessage(formatVpnDisableOutcomeMessage(
+                        finalStatus,
+                        disableTouchedAdditionalSettings ? "VPN settings saved and VPN disabled." : "VPN disabled.",
+                    ));
                     return;
                 }
 
@@ -2209,17 +2264,24 @@ export function SettingsPage({selection}: SettingsPageProps) {
                 return;
             }
 
-            setVpnMessage(hadUnsavedChanges ? "VPN settings saved." : "VPN settings are already up to date.");
+            if (isDisableRequest) {
+                setVpnMessage(disableTouchedAdditionalSettings ? "VPN settings saved and VPN disabled." : "VPN disabled.");
+            } else {
+                setVpnMessage(hadUnsavedChanges ? "VPN settings saved." : "VPN settings are already up to date.");
+            }
             await Promise.all([loadVpnRegions(), refreshVpnSettings({preserveMessage: true})]);
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
-            setVpnError(msg);
+            if (isLatestVpnAction(actionToken)) {
+                setVpnError(msg);
+            }
         } finally {
             setVpnSaving(false);
         }
     };
 
     const rotateVpnNow = async () => {
+        const actionToken = beginVpnAction();
         setVpnRotating(true);
         setVpnError(null);
         setVpnMessage(null);
@@ -2240,6 +2302,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
                 error?: string | null;
             } | null;
 
+            if (!isLatestVpnAction(actionToken)) {
+                return;
+            }
             if (!res.ok || json?.ok === false) {
                 await Promise.all([loadVpnRegions(), refreshVpnSettings({preserveMessage: true})]);
                 const message = normalizeString(json?.error).trim()
@@ -2253,6 +2318,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
                 refresh: () => refreshVpnSettings({preserveMessage: true}),
                 isBusy: (snapshot) => isVpnRuntimeBusy(snapshot?.status),
             });
+            if (!isLatestVpnAction(actionToken)) {
+                return;
+            }
             const finalStatus = finalVpnSettings?.status ?? null;
             const finalError = normalizeString(finalStatus?.lastError).trim();
             if (finalError) {
@@ -2267,13 +2335,16 @@ export function SettingsPage({selection}: SettingsPageProps) {
             ));
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
-            setVpnError(msg);
+            if (isLatestVpnAction(actionToken)) {
+                setVpnError(msg);
+            }
         } finally {
             setVpnRotating(false);
         }
     };
 
     const testVpnLogin = async () => {
+        const actionToken = beginVpnAction();
         setVpnTesting(true);
         setVpnError(null);
         setVpnMessage(null);
@@ -2290,6 +2361,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
             });
             const json = (await res.json().catch(() => null)) as VpnLoginTestResult | null;
 
+            if (!isLatestVpnAction(actionToken)) {
+                return;
+            }
             const failed = !res.ok || json?.ok === false;
             if (failed) {
                 const message = normalizeString(json?.error).trim()
@@ -2307,7 +2381,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
             }, vpnRegion));
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
-            setVpnError(msg);
+            if (isLatestVpnAction(actionToken)) {
+                setVpnError(msg);
+            }
         } finally {
             setVpnTesting(false);
         }
@@ -4601,6 +4677,23 @@ export function SettingsPage({selection}: SettingsPageProps) {
             rotating: vpnRotating,
             testing: vpnTesting,
         });
+        const currentVpnDraft = buildCurrentVpnDraftSnapshot();
+        const vpnBusyDisableEditingAllowed =
+            !vpnLoading
+            && !vpnTesting
+            && vpnPersistedDraft?.enabled === true
+            && (isVpnRuntimeBusy(vpnStatus) || vpnSaving || vpnRotating);
+        const vpnDisableOnlySaveAllowed = canSubmitVpnDisableWhileBusy({
+            status: vpnStatus,
+            loading: vpnLoading,
+            saving: vpnSaving,
+            rotating: vpnRotating,
+            testing: vpnTesting,
+            currentDraft: currentVpnDraft,
+            persistedDraft: vpnPersistedDraft,
+        });
+        const vpnEnableToggleDisabled = vpnControlsLocked && !vpnBusyDisableEditingAllowed;
+        const vpnSaveDisabled = vpnControlsLocked && !vpnDisableOnlySaveAllowed;
         const vpnRotateDisabled = vpnControlsLocked || !vpnEnabled;
 
         return (
@@ -4662,8 +4755,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             padding. <code>{`{chapter_padded}`}</code> remains available as the same padded value.
                         </Text>
                         <Text onBackground="neutral-weak" variant="body-default-xs">
-                            <code>{`{volume}`}</code> uses the stored Noona volume map when one exists and falls back
-                            to volume 1. <code>{`{volume_padded}`}</code> uses the configured volume padding width.
+                            <code>{`{volume}`}</code> only uses an explicit Noona chapter-to-volume map. When no map
+                            exists yet, Raven leaves the volume token blank. <code>{`{volume_padded}`}</code> uses
+                            the configured volume padding width when a mapped volume exists.
                         </Text>
                         {namingError &&
                             <Text onBackground="danger-strong" variant="body-default-xs">{namingError}</Text>}
@@ -4843,7 +4937,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
                                 </Button>
                                 <Button
                                     variant="primary"
-                                    disabled={vpnControlsLocked}
+                                    disabled={vpnSaveDisabled}
                                     onClick={() => void saveVpnSettings()}
                                 >
                                     {vpnSaving ? "Saving..." : "Save VPN"}
@@ -4861,9 +4955,13 @@ export function SettingsPage({selection}: SettingsPageProps) {
                         <Row gap="12" style={{flexWrap: "wrap"}}>
                             <Switch
                                 isChecked={vpnEnabled}
-                                disabled={vpnControlsLocked}
+                                disabled={vpnEnableToggleDisabled}
                                 ariaLabel="Toggle Raven VPN"
-                                onToggle={() => setVpnEnabled((prev) => !prev)}
+                                onToggle={() => {
+                                    const nextEnabled = !vpnEnabled;
+                                    setVpnPendingDisableIntent(vpnBusyDisableEditingAllowed && nextEnabled === false);
+                                    setVpnEnabled(nextEnabled);
+                                }}
                             />
                             <Text variant="body-default-xs">Enable VPN for Raven downloads</Text>
                         </Row>

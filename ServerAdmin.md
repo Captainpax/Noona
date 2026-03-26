@@ -166,6 +166,10 @@ Important paths under the storage root:
 - `kavita/`: managed Kavita config
 - `komf/`: managed Komf config
 
+Raven's default chapter files stay chapter-only until Noona has explicit chapter-to-volume metadata for that chapter.
+If you later confirm metadata for a title, Raven's volume-map repair flow can rename those existing files to the real
+volume numbers.
+
 If you still have older `noona-settings.json` or `warden/setup-wizard-state.json` files from an earlier install,
 Warden migrates them into `wardenm/noona-settings.json` and removes the duplicates when it can.
 
@@ -305,12 +309,16 @@ PIA regions stay blank or Raven VPN shows no IP:
 
 - open Moon at `Admin -> System -> Downloader` and read the VPN error shown under the PIA section before changing
   Docker capabilities or tunnel device settings
-- while Raven is rotating, Moon disables the VPN controls until the runtime settles; wait for the rotation to finish
-  before retrying the action
+- while Raven is rotating, Moon still keeps the VPN card mostly locked until the runtime settles, but it now lets you
+  turn the VPN off and save that disable request without waiting for the current rotation to finish first
 - `Save VPN` now persists the current card values first and immediately applies connection-affecting changes such as
   enablement, region, or PIA credential updates.
   If Raven rejects that apply, Moon keeps the saved values in place and shows the final Raven error instead of rolling
   the card back silently.
+- if you turn VPN off while Raven is already rotating, Sage saves `enabled=false` first and asks Raven to queue the
+  disable behind the active rotation.
+  Raven still finishes the current maintenance-safe reconnect steps, then disconnects immediately instead of leaving the
+  tunnel up.
 - `Rotate now` now saves the current on-screen VPN draft before Raven reconnects.
   Unsaved region, username, or password edits on the card are part of the rotation request.
 - when `Rotate now` fails after polling settles, Moon now shows Raven's phase-specific final failure text in the card.
@@ -320,6 +328,9 @@ PIA regions stay blank or Raven VPN shows no IP:
 - queued downloads waiting on VPN now react to fresh settings reads immediately.
   If you disable the VPN gate or change VPN settings to remove the wait condition, Raven should stop waiting without
   needing an extra cache-delay retry window.
+- turning VPN off does not automatically clear `Only download when VPN is on`.
+  That gate is still a separate setting, so queued downloads only stop waiting when you turn off the gate itself or let
+  Raven reconnect successfully.
 - VPN login tests now return their final result directly, so a success or failure message from Moon is the real probe
   outcome rather than a background-start notice
 - Raven now keeps the last known-good PIA profiles on disk after a bad upstream refresh, so an empty region list plus a

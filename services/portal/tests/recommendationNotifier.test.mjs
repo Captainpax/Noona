@@ -2,7 +2,7 @@
  * @fileoverview Covers recommendation DM delivery, timeline sync, and polling behavior.
  * Related files:
  * - discord/recommendationNotifier.mjs
- * Times this file has been edited: 7
+ * Times this file has been edited: 8
  */
 
 import assert from 'node:assert/strict';
@@ -339,6 +339,123 @@ test('recommendation notifier applies deferred metadata after Raven import is re
     assert.ok(Array.isArray(recommendations[0]?.timeline));
     assert.ok(recommendations[0].timeline.some((event) => /saved metadata selection/i.test(event?.body ?? '')));
     assert.ok(recommendations[0].timeline.some((event) => /chapter-to-volume map/i.test(event?.body ?? '')));
+});
+
+test('recommendation notifier records no-op volume-map wording when provider lacks usable chapter coverage', async () => {
+    const recommendations = [
+        {
+            _id: 'rec-deferred-metadata-no-map-1',
+            status: 'approved',
+            title: 'Solo Leveling',
+            href: 'https://source.example/solo-leveling',
+            metadataSelection: {
+                status: 'pending',
+                query: 'Solo Leveling',
+                title: 'Solo Leveling',
+                provider: 'mal',
+                providerSeriesId: '15180124327',
+                coverImageUrl: 'https://covers.example/solo-leveling.jpg',
+            },
+            notifications: {
+                approvalDmSentAt: '2026-03-07T00:00:00.000Z',
+            },
+        },
+    ];
+    const volumeMapCalls = [];
+
+    const notifier = createRecommendationNotifier({
+        discordClient: {},
+        vaultClient: {
+            findRecommendations: async () => recommendations.map((entry) => ({...entry})),
+            updateRecommendation: async ({query, update} = {}) => {
+                const index = recommendations.findIndex((entry) => matchesQuery(entry, query));
+                if (index < 0) {
+                    return {status: 'ok', matched: 0, modified: 0};
+                }
+
+                recommendations[index] = applyUpdate(recommendations[index], update);
+                return {status: 'ok', matched: 1, modified: 1};
+            },
+        },
+        ravenClient: {
+            getLibrary: async () => [
+                {
+                    uuid: 'title-uuid-7',
+                    title: 'Solo Leveling',
+                    sourceUrl: 'https://source.example/solo-leveling',
+                },
+            ],
+            updateTitle: async (uuid, payload) => ({
+                uuid,
+                coverUrl: payload?.coverUrl,
+            }),
+            applyTitleVolumeMap: async (uuid, payload) => {
+                volumeMapCalls.push({uuid, payload});
+                return {
+                    title: {uuid},
+                    renameSummary: {
+                        attempted: true,
+                        renamed: 0,
+                        skippedCollisions: 0,
+                        alreadyMatched: 0,
+                    },
+                };
+            },
+        },
+        kavitaClient: {
+            searchTitles: async () => ({
+                series: [
+                    {
+                        libraryId: 4,
+                        seriesId: 17,
+                        name: 'Solo Leveling',
+                    },
+                ],
+            }),
+            setSeriesCover: async () => ({ok: true}),
+        },
+        komfClient: {
+            identifySeriesMetadata: async () => ({ok: true}),
+            getSeriesMetadataDetails: async () => ({
+                provider: 'mal',
+                providerSeriesId: '15180124327',
+                books: [
+                    {
+                        providerBookId: 'book-range-only',
+                        volumeRangeStart: 1,
+                        volumeRangeEnd: 2,
+                    },
+                    {
+                        providerBookId: 'book-no-coverage',
+                        volumeNumber: 3,
+                    },
+                ],
+            }),
+        },
+        pollMs: 60000,
+        logger: {},
+    });
+
+    notifier.start();
+    await notifier.refresh();
+    notifier.stop();
+
+    assert.deepEqual(volumeMapCalls, [
+        {
+            uuid: 'title-uuid-7',
+            payload: {
+                provider: 'mal',
+                providerSeriesId: '15180124327',
+                chapterVolumeMap: {},
+                autoRename: true,
+            },
+        },
+    ]);
+    assert.ok(recommendations[0].timeline.some((event) => {
+        const body = event?.body ?? '';
+        return /usable chapter-to-volume coverage/i.test(body)
+            && /left the current chapter file naming unchanged/i.test(body);
+    }));
 });
 
 test('recommendation notifier prefers configured external Kavita URL for completion DMs', async () => {
