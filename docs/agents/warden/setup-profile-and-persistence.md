@@ -13,7 +13,7 @@ Current public shape:
 - `komf`
   `mode`, `baseUrl`, `applicationYml`
 - `discord`
-  bot/client/guild fields, per-command role gates, join defaults
+  bot/client/guild fields, `requiredGuildId`, per-command role gates, join defaults
 - `savedAt`
 
 This is the stable browser contract. Moon and Sage should not have to understand raw descriptor internals.
@@ -29,6 +29,7 @@ Important behavior:
 - legacy `values` maps are accepted
 - legacy `values.*.NOONA_DATA_ROOT` imports into top-level `storageRoot`
 - legacy `integrations.kavita` and `integrations.komf` shapes are accepted
+- legacy `values["noona-portal"].REQUIRED_GUILD_ID` imports into `discord.requiredGuildId`
 - service aliases like `kavita` and `komf` are normalized to `noona-kavita` and `noona-komf`
 - `POST /api/setup/config/normalize` uses the same normalization rules without writing files or restarting services
 
@@ -78,6 +79,10 @@ Current derived rules:
   `noona-komf`
 - `storageRoot` stays top-level setup metadata and is not mirrored into per-service runtime overrides
 - Kavita and Komf managed/external modes rewrite the correct downstream env fields
+- `komf.baseUrl` belongs to the public setup profile and derives `values["noona-portal"].KOMF_BASE_URL` only when
+  Komf is external; managed Komf clears that Portal override so the runtime falls back to `http://noona-komf:8085`
+- Portal Discord derivation must write both `DISCORD_GUILD_ID` and `REQUIRED_GUILD_ID` from the normalized public
+  profile so saved setup edits do not leave Portal enforcing a stale guild gate
 - setup save and restore paths only persist derived env keys that belong to the editable runtime schema
 
 If the public profile changes, update the derivation rules too.

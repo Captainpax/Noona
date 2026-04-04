@@ -411,6 +411,12 @@ const serviceDefs = rawList.map(name => {
                 sensitive: true,
             },
             {
+                key: 'KOMF_BASE_URL',
+                label: 'Komf Base URL',
+                description: 'Optional URL Portal should use when metadata requests go to an external Komf instance.',
+                required: false,
+            },
+            {
                 key: 'PORTAL_JOIN_DEFAULT_ROLES',
                 label: 'Website Onboarding Default Roles',
                 description:

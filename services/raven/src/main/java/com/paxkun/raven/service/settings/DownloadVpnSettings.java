@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/VPNServices.java
  * - src/test/java/com/paxkun/raven/service/DownloadServiceTest.java
  * - src/test/java/com/paxkun/raven/service/VPNServicesTest.java
- * Times this file has been edited: 3
+ * Times this file has been edited: 4
  */
 package com.paxkun.raven.service.settings;
 
@@ -25,8 +25,6 @@ public class DownloadVpnSettings {
     private String provider;
     private Boolean enabled;
     private Boolean onlyDownloadWhenVpnOn;
-    private Boolean autoRotate;
-    private Integer rotateEveryMinutes;
     private String region;
     private String piaUsername;
     private String piaPassword;

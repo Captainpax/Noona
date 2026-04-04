@@ -10,6 +10,11 @@ import {
     hydrateSetupProfileState,
     shouldShowSetupDebugDetails,
 } from "./setupProfile.mjs";
+import {
+    applySelectedDiscordGuild,
+    applySuggestedDiscordValues,
+    getDiscordGuildGateMismatch,
+} from "./discordGuildSelection.mjs";
 import {executeSetupActionPreparation, SETUP_ACTION_INSTALL, SETUP_ACTION_SUMMARY,} from "./setupActionPreparation.mjs";
 import {clearSetupSummarySession, writeSetupSummarySession,} from "./setupSummarySession.mjs";
 import styles from "./SetupWizard.module.scss";
@@ -130,6 +135,19 @@ type DiscordSetupBotUser = {
     tag?: string | null;
 };
 
+type DiscordApplicationCommandSummary = {
+    id?: string | null;
+    name?: string | null;
+    description?: string | null;
+    type?: number | null;
+};
+
+type DiscordCommandInventory = {
+    globalCommands?: DiscordApplicationCommandSummary[] | null;
+    guildCommands?: DiscordApplicationCommandSummary[] | null;
+    duplicateNames?: string[] | null;
+};
+
 type DiscordSetupResponse = {
     application?: DiscordSetupApplication | null;
     botUser?: DiscordSetupBotUser | null;
@@ -141,6 +159,7 @@ type DiscordSetupResponse = {
     } | null;
     roles?: Array<{ id?: string | null; name?: string | null }> | null;
     channels?: Array<{ id?: string | null; name?: string | null }> | null;
+    commands?: DiscordCommandInventory | null;
     error?: string;
 };
 
@@ -212,6 +231,7 @@ const DERIVED_KEYS = new Set([
     "KAVITA_ADMIN_PASSWORD",
     "KOMF_KAVITA_BASE_URI",
     "KOMF_KAVITA_API_KEY",
+    "KOMF_BASE_URL",
     "KOMF_CONFIG_HOST_MOUNT_PATH",
 ]);
 const KOMF_APPLICATION_YML_KEY = "KOMF_APPLICATION_YML";
@@ -649,6 +669,7 @@ const buildDerivedValues = ({
                                 kavitaAdminPassword,
                                 kavitaSharedLibraryPath,
                                 komfMode,
+                                komfBaseUrl,
                             }: {
     values: Record<string, Record<string, string>>;
     servicesByName: Map<string, ServiceCatalogEntry>;
@@ -660,6 +681,7 @@ const buildDerivedValues = ({
     kavitaAdminPassword: string;
     kavitaSharedLibraryPath: string;
     komfMode: IntegrationMode;
+    komfBaseUrl: string;
 }) => {
     return applyDerivedEnvState(deriveSetupProfileValues({
         values,
@@ -672,6 +694,7 @@ const buildDerivedValues = ({
         kavitaAdminPassword,
         kavitaSharedLibraryPath,
         komfMode,
+        komfBaseUrl,
     }));
 };
 
@@ -859,7 +882,6 @@ export function SetupWizard() {
             }))
             .filter((entry) => entry.id);
     }, [discordValidation]);
-
     const profileSelectedServices = useMemo(
         () => new Set(deriveSetupProfileSelection({kavitaMode, komfMode})),
         [kavitaMode, komfMode],
@@ -926,6 +948,7 @@ export function SetupWizard() {
             kavitaAdminPassword,
             kavitaSharedLibraryPath,
             komfMode,
+            komfBaseUrl,
         }),
         [
             values,
@@ -938,7 +961,12 @@ export function SetupWizard() {
             kavitaAdminPassword,
             kavitaSharedLibraryPath,
             komfMode,
+            komfBaseUrl,
         ],
+    );
+    const discordGuildGateMismatch = useMemo(
+        () => getDiscordGuildGateMismatch(effectiveValues["noona-portal"] ?? {}),
+        [effectiveValues],
     );
 
     const installReadyForSummary = useMemo(() => {
@@ -1327,35 +1355,31 @@ export function SetupWizard() {
     };
 
     const applyDiscordSuggestedValues = (payload: DiscordSetupResponse | null, {overwrite = false} = {}) => {
-        const suggestedClientId = normalizeString(payload?.suggested?.clientId).trim();
-        const suggestedGuildId = normalizeString(payload?.suggested?.guildId).trim();
         const currentPortal = effectiveValues["noona-portal"] ?? {};
-
-        if (!overwrite && (!suggestedClientId || normalizeString(currentPortal.DISCORD_CLIENT_ID).trim()) && (!suggestedGuildId || normalizeString(currentPortal.DISCORD_GUILD_ID).trim())) {
+        const nextPortal = applySuggestedDiscordValues(currentPortal, payload?.suggested ?? {}, {overwrite});
+        if (
+            normalizeString(nextPortal.DISCORD_CLIENT_ID).trim() === normalizeString(currentPortal.DISCORD_CLIENT_ID).trim()
+            && normalizeString(nextPortal.DISCORD_GUILD_ID).trim() === normalizeString(currentPortal.DISCORD_GUILD_ID).trim()
+            && normalizeString(nextPortal.REQUIRED_GUILD_ID).trim() === normalizeString(currentPortal.REQUIRED_GUILD_ID).trim()
+        ) {
             return;
         }
 
         setValues((prev) => {
-            const current = prev["noona-portal"] ?? {};
-            const nextPortal = {...current};
-
-            if (suggestedClientId && (overwrite || !normalizeString(current.DISCORD_CLIENT_ID).trim())) {
-                nextPortal.DISCORD_CLIENT_ID = suggestedClientId;
-            }
-
-            if (suggestedGuildId && (overwrite || !normalizeString(current.DISCORD_GUILD_ID).trim())) {
-                nextPortal.DISCORD_GUILD_ID = suggestedGuildId;
-            }
-
             return applyDerivedEnvState({
                 ...prev,
-                "noona-portal": nextPortal,
+                "noona-portal": applySuggestedDiscordValues(prev["noona-portal"] ?? {}, payload?.suggested ?? {}, {overwrite}),
             });
         });
     };
 
     const selectDiscordGuild = (guildId: string) => {
-        updateEnv("noona-portal", "DISCORD_GUILD_ID", guildId);
+        setValues((prev) =>
+            applyDerivedEnvState({
+                ...prev,
+                "noona-portal": applySelectedDiscordGuild(prev["noona-portal"] ?? {}, guildId),
+            }),
+        );
         setDiscordValidation((prev) => prev ? ({
             ...prev,
             suggested: {
@@ -1433,6 +1457,7 @@ export function SetupWizard() {
             kavitaAdminPassword,
             kavitaSharedLibraryPath,
             komfMode,
+            komfBaseUrl,
         });
 
         return buildSetupProfileSnapshot({
@@ -1936,6 +1961,19 @@ export function SetupWizard() {
                                                 {discordValidationError}
                                             </Text>
                                         )}
+                                        {discordGuildGateMismatch && (
+                                            <Text onBackground="warning-strong" variant="body-default-xs">
+                                                Discord guild mismatch: Portal will register commands in
+                                                {" "}
+                                                <code>{discordGuildGateMismatch.guildId}</code>
+                                                {" "}
+                                                but enforce
+                                                {" "}
+                                                <code>{discordGuildGateMismatch.requiredGuildId}</code>
+                                                . Keep those aligned unless you intentionally want a separate access
+                                                gate.
+                                            </Text>
+                                        )}
 
                                         {discordValidation?.botUser && (
                                             <Row gap="8" style={{flexWrap: "wrap"}}>
@@ -1986,6 +2024,76 @@ export function SetupWizard() {
                                                         </Row>
                                                     );
                                                 })}
+                                            </Column>
+                                        )}
+                                        {discordValidation?.commands && (
+                                            <Column gap="8">
+                                                <Text variant="label-default-s">Slash command diagnostics</Text>
+                                                <Text onBackground="neutral-weak" variant="body-default-xs">
+                                                    Duplicate global and guild command names can cause stale or buggy
+                                                    slash-command behavior in Discord.
+                                                </Text>
+                                                <Text onBackground="neutral-weak" variant="body-default-xs">
+                                                    Global
+                                                    commands: {Array.isArray(discordValidation.commands.globalCommands) ? discordValidation.commands.globalCommands.length : 0}
+                                                    {" "}
+                                                    | Guild
+                                                    commands: {Array.isArray(discordValidation.commands.guildCommands) ? discordValidation.commands.guildCommands.length : 0}
+                                                </Text>
+                                                <Text
+                                                    onBackground={
+                                                        Array.isArray(discordValidation.commands.duplicateNames) && discordValidation.commands.duplicateNames.length > 0
+                                                            ? "warning-strong"
+                                                            : "neutral-weak"
+                                                    }
+                                                    variant="body-default-xs"
+                                                >
+                                                    Duplicate names:
+                                                    {" "}
+                                                    {Array.isArray(discordValidation.commands.duplicateNames) && discordValidation.commands.duplicateNames.length > 0
+                                                        ? discordValidation.commands.duplicateNames.join(", ")
+                                                        : "none"}
+                                                </Text>
+                                                {Array.isArray(discordValidation.commands.guildCommands) && discordValidation.commands.guildCommands.length > 0 && (
+                                                    <Column gap="4">
+                                                        <Text variant="label-default-s">Guild command IDs</Text>
+                                                        {discordValidation.commands.guildCommands.map((command) => {
+                                                            const commandName = normalizeString(command?.name).trim();
+                                                            const commandId = normalizeString(command?.id).trim();
+                                                            return (
+                                                                <Text
+                                                                    key={`discord-guild-command-${commandId || commandName || "unknown"}`}
+                                                                    onBackground="neutral-weak"
+                                                                    variant="body-default-xs">
+                                                                    /
+                                                                    {commandName || "unknown"}
+                                                                    {" "}
+                                                                    ({commandId || "no id"})
+                                                                </Text>
+                                                            );
+                                                        })}
+                                                    </Column>
+                                                )}
+                                                {Array.isArray(discordValidation.commands.globalCommands) && discordValidation.commands.globalCommands.length > 0 && (
+                                                    <Column gap="4">
+                                                        <Text variant="label-default-s">Global command IDs</Text>
+                                                        {discordValidation.commands.globalCommands.map((command) => {
+                                                            const commandName = normalizeString(command?.name).trim();
+                                                            const commandId = normalizeString(command?.id).trim();
+                                                            return (
+                                                                <Text
+                                                                    key={`discord-global-command-${commandId || commandName || "unknown"}`}
+                                                                    onBackground="neutral-weak"
+                                                                    variant="body-default-xs">
+                                                                    /
+                                                                    {commandName || "unknown"}
+                                                                    {" "}
+                                                                    ({commandId || "no id"})
+                                                                </Text>
+                                                            );
+                                                        })}
+                                                    </Column>
+                                                )}
                                             </Column>
                                         )}
                                     </Column>

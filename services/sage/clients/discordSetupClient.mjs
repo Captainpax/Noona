@@ -175,6 +175,70 @@ const mapRestChannel = (channel) => ({
     type: typeof channel?.type === 'number' ? channel.type : null,
 })
 
+const mapRestCommand = (command) => ({
+    id: command?.id ?? null,
+    name: command?.name ?? null,
+    description: command?.description ?? '',
+    type: typeof command?.type === 'number' ? command.type : null,
+})
+
+const sortCommands = (left, right) => (left?.name ?? '').localeCompare(right?.name ?? '')
+
+const summarizeCommandInventory = ({globalCommands = [], guildCommands = []} = {}) => {
+    const globalNames = new Set(globalCommands.map((command) => normalizeString(command?.name)).filter(Boolean))
+    const guildNames = new Set(guildCommands.map((command) => normalizeString(command?.name)).filter(Boolean))
+    const duplicateNames = Array.from(globalNames)
+        .filter((name) => guildNames.has(name))
+        .sort((left, right) => left.localeCompare(right))
+
+    return {
+        globalCommands,
+        guildCommands,
+        duplicateNames,
+    }
+}
+
+const fetchCommandInventory = async ({
+                                         token,
+                                         clientId,
+                                         guildId,
+                                         fetchImpl,
+                                     }) => {
+    const resolvedClientId = normalizeString(clientId)
+    const resolvedGuildId = normalizeString(guildId)
+
+    if (!resolvedClientId) {
+        return summarizeCommandInventory()
+    }
+
+    const [globalResponse, guildResponse] = await Promise.all([
+        fetchDiscordResource({
+            token,
+            path: `/applications/${encodeURIComponent(resolvedClientId)}/commands`,
+            fetchImpl,
+        }),
+        resolvedGuildId
+            ? fetchDiscordResource({
+                token,
+                path: `/applications/${encodeURIComponent(resolvedClientId)}/guilds/${encodeURIComponent(resolvedGuildId)}/commands`,
+                fetchImpl,
+            })
+            : Promise.resolve([]),
+    ])
+
+    const globalCommands = Array.isArray(globalResponse)
+        ? globalResponse.map(mapRestCommand).sort(sortCommands)
+        : []
+    const guildCommands = Array.isArray(guildResponse)
+        ? guildResponse.map(mapRestCommand).sort(sortCommands)
+        : []
+
+    return summarizeCommandInventory({
+        globalCommands,
+        guildCommands,
+    })
+}
+
 const withDiscordClient = async (
     {token, guildId, logger, serviceName, createClient = createDiscordClient},
     handler,
@@ -304,6 +368,20 @@ export const createDiscordSetupClient = ({
                     }
                 }
 
+                let commands = summarizeCommandInventory()
+                try {
+                    commands = await fetchCommandInventory({
+                        token,
+                        clientId: detectedClientId || clientId,
+                        guildId: resolvedGuildId,
+                        fetchImpl,
+                    })
+                } catch (error) {
+                    logger?.error?.(
+                        `[${serviceName}] Failed to load Discord slash command inventory: ${error instanceof Error ? error.message : error}`,
+                    )
+                }
+
                 const summary = guild ? mapGuild(guild) : null
                 const resourceSummary = summary
                     ? `[${serviceName}] Verified Discord guild ${summary.name || summary.id} with ${roles.length} roles and ${channels.length} channels`
@@ -327,6 +405,7 @@ export const createDiscordSetupClient = ({
                     guild: summary,
                     roles,
                     channels,
+                    commands,
                     suggested: {
                         clientId: detectedClientId || null,
                         guildId: resolvedGuildId || null,

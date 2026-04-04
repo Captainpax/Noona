@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/service/settings/DownloadNamingSettings.java
  * - src/main/java/com/paxkun/raven/service/settings/DownloadVpnSettings.java
- * Times this file has been edited: 38
+ * Times this file has been edited: 39
  */
 package com.paxkun.raven.service;
 
@@ -160,7 +160,7 @@ public class DownloadService {
                     restorePersistedDownloadsForProcessMode();
                     dispatchQueuedProcessWorkers();
                 } catch (Exception e) {
-                    logger.error("DOWNLOAD_SERVICE", "⚠️ Failed to async restore process-mode downloads", e);
+                    logger.error("DOWNLOAD_SERVICE", "Failed to async restore process-mode downloads", e);
                 }
             });
             return;
@@ -172,7 +172,7 @@ public class DownloadService {
             try {
                 restorePersistedDownloadsForThreadMode();
             } catch (Exception e) {
-                logger.error("DOWNLOAD_SERVICE", "⚠️ Failed to async restore thread-mode downloads", e);
+                logger.error("DOWNLOAD_SERVICE", "Failed to async restore thread-mode downloads", e);
             }
         });
     }
@@ -226,7 +226,7 @@ public class DownloadService {
                 persistedTasks.add(progress);
             }
 
-            persistedTasks.sort(Comparator.comparingLong(DownloadProgress::getQueuedAt));
+            persistedTasks = collapseDuplicateRestorableTasksByTitle(persistedTasks, List.of(), "thread-restore");
             for (DownloadProgress progress : persistedTasks) {
                 String titleName = progress.getTitle();
                 if (titleName == null || titleName.isBlank() || activeDownloads.containsKey(titleName)) {
@@ -245,12 +245,17 @@ public class DownloadService {
                 activeDownloads.put(titleName, future);
             }
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to restore persisted Raven downloads: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Failed to restore persisted Raven downloads: " + e.getMessage());
         }
     }
 
     void restorePersistedDownloadsForProcessMode() {
-        for (DownloadProgress progress : loadPersistedTasks(new ArrayList<>(RESTORABLE_TASK_STATUSES))) {
+        List<DownloadProgress> persistedTasks = collapseDuplicateRestorableTasksByTitle(
+                loadPersistedTasks(new ArrayList<>(RESTORABLE_TASK_STATUSES)),
+                List.of(),
+                "process-restore"
+        );
+        for (DownloadProgress progress : persistedTasks) {
             if (progress == null) {
                 continue;
             }
@@ -269,6 +274,94 @@ public class DownloadService {
             progress.assignWorker(progress.getWorkerIndex(), progress.getCpuCoreId(), null, EXECUTION_MODE_PROCESS);
             persistTaskSnapshot(progress);
         }
+    }
+
+    /**
+     * Collapses duplicate restorable tasks for the same title so Raven keeps the
+     * newest queue intent and deletes older stale snapshots before restore or
+     * process-worker dispatch continues.
+     *
+     * @param persistedTasks   The tasks Raven loaded from Vault.
+     * @param protectedTaskIds Task ids Raven must keep even if they are older.
+     * @param lifecycleContext The restore or dispatch phase using the task list.
+     * @return The deduplicated tasks sorted oldest to newest for normal queue execution.
+     */
+    private List<DownloadProgress> collapseDuplicateRestorableTasksByTitle(
+            Collection<DownloadProgress> persistedTasks,
+            Collection<String> protectedTaskIds,
+            String lifecycleContext
+    ) {
+        if (persistedTasks == null || persistedTasks.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> protectedIds = protectedTaskIds == null
+                ? Set.of()
+                : protectedTaskIds.stream()
+                  .map(this::normalizeTaskId)
+                  .filter(taskId -> !taskId.isBlank())
+                  .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Comparator<DownloadProgress> taskRecencyComparator = Comparator
+                .comparingLong((DownloadProgress progress) -> Math.max(progress.getQueuedAt(), progress.getLastUpdated()))
+                .thenComparingLong(DownloadProgress::getQueuedAt)
+                .thenComparing(progress -> normalizeTaskId(progress.getTaskId()));
+
+        List<DownloadProgress> passthrough = new ArrayList<>();
+        Map<String, List<DownloadProgress>> tasksByTitle = new LinkedHashMap<>();
+        for (DownloadProgress progress : persistedTasks) {
+            if (progress == null) {
+                continue;
+            }
+
+            String titleKey = normalizeTaskTitleKey(progress.getTitle());
+            if (titleKey.isBlank()) {
+                passthrough.add(progress);
+                continue;
+            }
+            tasksByTitle.computeIfAbsent(titleKey, unused -> new ArrayList<>()).add(progress);
+        }
+
+        List<DownloadProgress> deduped = new ArrayList<>(passthrough);
+        List<String> duplicateTaskIds = new ArrayList<>();
+        for (List<DownloadProgress> titleTasks : tasksByTitle.values()) {
+            if (titleTasks == null || titleTasks.isEmpty()) {
+                continue;
+            }
+
+            DownloadProgress keep = titleTasks.stream()
+                    .filter(progress -> protectedIds.contains(normalizeTaskId(progress.getTaskId())))
+                    .max(taskRecencyComparator)
+                    .orElseGet(() -> titleTasks.stream().max(taskRecencyComparator).orElse(null));
+            if (keep == null) {
+                continue;
+            }
+
+            deduped.add(keep);
+            for (DownloadProgress progress : titleTasks) {
+                if (progress == keep) {
+                    continue;
+                }
+
+                String taskId = normalizeTaskId(progress.getTaskId());
+                if (!taskId.isBlank()) {
+                    duplicateTaskIds.add(taskId);
+                }
+            }
+        }
+
+        deduped.sort(Comparator
+                .comparingLong(DownloadProgress::getQueuedAt)
+                .thenComparingLong(DownloadProgress::getLastUpdated));
+        if (!duplicateTaskIds.isEmpty()) {
+            deletePersistedTaskSnapshots(duplicateTaskIds);
+            clearCurrentTaskSnapshotCacheIfMatches(duplicateTaskIds);
+            logger.info(
+                    "DOWNLOAD_SERVICE",
+                    "Collapsed duplicate Raven task snapshots | context=" + sanitizeForLog(lifecycleContext)
+                            + " | deletedTasks=" + duplicateTaskIds.size()
+            );
+        }
+        return deduped;
     }
 
     /**
@@ -433,7 +526,7 @@ public class DownloadService {
 
             if (activeTitleNames.contains(titleName)) {
                 skippedActiveTitles.add(titleName);
-                logger.info("DOWNLOAD", "Skipping already active download: " + titleName);
+                logger.debug("DOWNLOAD", "Skipping already active download: " + sanitizeForLog(titleName));
                 continue;
             }
 
@@ -484,6 +577,7 @@ public class DownloadService {
     }
 
     private DownloadProgress createQueuedProgress(String titleName, Map<String, String> selectedTitle, String taskType) {
+        clearInactiveSnapshotsForFreshQueue(titleName);
         DownloadProgress progress = new DownloadProgress(titleName);
         progress.ensureTaskId(UUID.randomUUID().toString());
         progress.attachTaskContext(
@@ -500,6 +594,120 @@ public class DownloadService {
         progress.setMessage("Queued in Raven.");
         persistTaskSnapshot(progress);
         return progress;
+    }
+
+    /**
+     * Clears stale non-active Raven task snapshots for a title before Raven
+     * queues a fresh full-download request.
+     *
+     * @param titleName The title Raven is about to queue.
+     */
+    private void clearInactiveSnapshotsForFreshQueue(String titleName) {
+        if (titleName == null || titleName.isBlank()) {
+            return;
+        }
+
+        String normalizedTitle = titleName.trim();
+        DownloadProgress trackedProgress = downloadProgress.get(normalizedTitle);
+        if (trackedProgress != null && !ACTIVE_TASK_STATUSES.contains(normalizeStatus(trackedProgress.getStatus()))) {
+            downloadProgress.remove(normalizedTitle);
+            activeDownloads.remove(normalizedTitle);
+        }
+        progressHistory.removeIf(progress ->
+                progress != null
+                        && normalizedTitle.equals(progress.getTitle())
+                        && !ACTIVE_TASK_STATUSES.contains(normalizeStatus(progress.getStatus()))
+        );
+
+        List<String> staleTaskIds = new ArrayList<>();
+        for (DownloadProgress progress : loadPersistedTasksByTitle(normalizedTitle)) {
+            if (progress == null || ACTIVE_TASK_STATUSES.contains(normalizeStatus(progress.getStatus()))) {
+                continue;
+            }
+            String taskId = normalizeTaskId(progress.getTaskId());
+            if (!taskId.isBlank()) {
+                staleTaskIds.add(taskId);
+            }
+        }
+
+        if (staleTaskIds.isEmpty()) {
+            return;
+        }
+
+        deletePersistedTaskSnapshots(staleTaskIds);
+        clearCurrentTaskSnapshotCacheIfMatches(staleTaskIds);
+        logger.info(
+                "DOWNLOAD_SERVICE",
+                "Cleared inactive Raven task snapshots before fresh queue | title=" + sanitizeForLog(normalizedTitle)
+                        + " | deletedTasks=" + staleTaskIds.size()
+        );
+    }
+
+    /**
+     * Deletes persisted Raven task snapshots by task id.
+     *
+     * @param taskIds The task ids Raven should remove.
+     */
+    private void deletePersistedTaskSnapshots(Collection<String> taskIds) {
+        if (vaultService == null || taskIds == null || taskIds.isEmpty()) {
+            return;
+        }
+
+        List<String> uniqueTaskIds = taskIds.stream()
+                .map(this::normalizeTaskId)
+                .filter(taskId -> !taskId.isBlank())
+                .distinct()
+                .toList();
+        if (uniqueTaskIds.isEmpty()) {
+            return;
+        }
+
+        try {
+            if (uniqueTaskIds.size() == 1) {
+                vaultService.delete(TASK_COLLECTION, Map.of("taskId", uniqueTaskIds.get(0)));
+                return;
+            }
+            vaultService.delete(TASK_COLLECTION, Map.of("taskId", Map.of("$in", uniqueTaskIds)));
+        } catch (Exception e) {
+            logger.warn("DOWNLOAD_SERVICE", "Failed to delete stale Raven task snapshots: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Clears the cached current-task snapshot when it points at a task Raven
+     * just deleted from persisted storage.
+     *
+     * @param deletedTaskIds The task ids Raven removed.
+     */
+    private void clearCurrentTaskSnapshotCacheIfMatches(Collection<String> deletedTaskIds) {
+        if (deletedTaskIds == null || deletedTaskIds.isEmpty() || vaultService == null) {
+            return;
+        }
+
+        try {
+            DownloadProgress currentSnapshot = getCurrentTaskSnapshot();
+            String currentTaskId = currentSnapshot == null ? "" : normalizeTaskId(currentSnapshot.getTaskId());
+            if (currentTaskId.isBlank()) {
+                return;
+            }
+
+            for (String taskId : deletedTaskIds) {
+                if (currentTaskId.equals(normalizeTaskId(taskId))) {
+                    vaultService.deleteRedisValue(CURRENT_TASK_REDIS_KEY);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("DOWNLOAD_SERVICE", "Failed to clear cached Raven current task snapshot: " + e.getMessage());
+        }
+    }
+
+    private String normalizeTaskId(String taskId) {
+        return taskId == null ? "" : taskId.trim();
+    }
+
+    private String normalizeTaskTitleKey(String titleName) {
+        return titleName == null ? "" : titleName.trim().toLowerCase(Locale.ROOT);
     }
 
     boolean isTaskActive(String titleName) {
@@ -534,11 +742,29 @@ public class DownloadService {
      */
 
     public PauseRequestResult requestPauseActiveDownloads() {
-        if (isProcessWorkerMain()) {
-            return requestPauseForProcessWorkers();
-        }
+        PauseRequestResult result = isProcessWorkerMain()
+                ? requestPauseForProcessWorkers()
+                : requestPauseForThreadedWorkers();
+        logPauseRequestSummary(result);
+        return result;
+    }
 
-        return requestPauseForThreadedWorkers();
+    /**
+     * Logs the concise normal-run pause summary Raven keeps around maintenance
+     * operations such as VPN transitions.
+     *
+     * @param pauseResult The pause result Raven is about to honor.
+     */
+    private void logPauseRequestSummary(PauseRequestResult pauseResult) {
+        PauseRequestResult safeResult = pauseResult == null
+                ? new PauseRequestResult(List.of(), List.of())
+                : pauseResult;
+        logger.info(
+                "DOWNLOAD_SERVICE",
+                "Pause requested for " + safeResult.getAffectedTasks()
+                        + " download(s) | pausedImmediately=" + safeResult.pausedImmediately().size()
+                        + " | pausingAfterCurrentChapter=" + safeResult.pausingAfterCurrentChapter().size()
+        );
     }
 
     private PauseRequestResult requestPauseForThreadedWorkers() {
@@ -623,7 +849,7 @@ public class DownloadService {
 
     public void beginMaintenancePause(String reason) {
         maintenancePauseActive.set(true);
-        logger.info("DOWNLOAD_SERVICE", "⏸️ Raven maintenance pause enabled. " + sanitizeForLog(reason));
+        logger.info("DOWNLOAD_SERVICE", "Maintenance pause enabled | reason=" + sanitizeForLog(reason));
     }
 
     /**
@@ -634,7 +860,7 @@ public class DownloadService {
 
     public void endMaintenancePause(String reason) {
         maintenancePauseActive.set(false);
-        logger.info("DOWNLOAD_SERVICE", "▶️ Raven maintenance pause cleared. " + sanitizeForLog(reason));
+        logger.info("DOWNLOAD_SERVICE", "Maintenance pause cleared | reason=" + sanitizeForLog(reason));
         if (isProcessWorkerMain()) {
             dispatchQueuedProcessWorkers();
         }
@@ -781,6 +1007,11 @@ public class DownloadService {
             progress.markRecoveredFromCache("resume");
             progress.setMessage(message);
             persistTaskSnapshot(progress);
+            logger.info(
+                    "DOWNLOAD",
+                    "Resuming download | title=" + sanitizeForLog(titleName)
+                            + " | taskId=" + sanitizeForLog(progress.getTaskId())
+            );
 
             if (isProcessWorkerMain()) {
                 dispatchQueuedProcessWorkers();
@@ -936,7 +1167,7 @@ public class DownloadService {
                     logger.debug(
                             "DOWNLOAD_SERVICE",
                             "Title already downloading | title=" + sanitizedTitle);
-                    logger.info("DOWNLOAD", "Skipping already active download: " + titleName);
+                    logger.debug("DOWNLOAD", "Skipping already active download: " + sanitizeForLog(titleName));
                     skippedTitles.add(safeTitleName);
                     continue;
                 }
@@ -1052,7 +1283,6 @@ public class DownloadService {
 
             String titleUrl = selectedTitle.get("href");
             progress.ensureTaskId(UUID.randomUUID().toString());
-            logger.info("DOWNLOAD", "🚀 Starting download for [" + titleName + "]");
             logger.debug(
                     "DOWNLOAD",
                     "Resolved title URL | title=" + sanitizeForLog(titleName) +
@@ -1134,10 +1364,17 @@ public class DownloadService {
                     chapters.size(),
                     progress.isRecoveredFromCache() ? "Recovered download resumed from Vault." : "Downloading queued chapters."
             );
+            logger.info(
+                    "DOWNLOAD",
+                    "Starting download | title=" + sanitizeForLog(titleName)
+                            + " | plannedChapters=" + plannedChapters.size()
+                            + " | totalChapters=" + chapters.size()
+            );
             if (plannedChapters.isEmpty()) {
                 progress.setMessage("No pending chapters remained in the cached Raven task.");
                 progress.markCompleted();
                 persistTaskSnapshot(progress);
+                logger.info("DOWNLOAD", "Download already up to date | title=" + sanitizeForLog(titleName));
                 return;
             }
             titleRecord.setChapterCount(chapters.size());
@@ -1175,11 +1412,16 @@ public class DownloadService {
                                 " | chapterTitle=" + sanitizeForLog(chapterTitle) +
                                 " | url=" + sanitizeForLog(chapterUrl));
 
-                logger.info("DOWNLOAD", "📥 Downloading Chapter [" + chapterNumber + "]: " + chapterUrl);
+                logger.debug(
+                        "DOWNLOAD",
+                        "Downloading chapter | title=" + sanitizeForLog(titleName)
+                                + " | chapterNumber=" + sanitizeForLog(chapterNumber)
+                                + " | url=" + sanitizeForLog(chapterUrl)
+                );
 
                 List<String> pageUrls = sourceFinder.findSource(chapterUrl);
                 if (pageUrls.isEmpty()) {
-                    logger.warn("DOWNLOAD", "⚠️ No pages found for chapter " + chapterNumber + ". Skipping.");
+                    logger.warn("DOWNLOAD", "No pages found for chapter " + chapterNumber + ". Skipping.");
                     failedChapters.add(chapterNumber);
                     progress.setMessage("Chapter " + chapterNumber + " could not be resolved. It will be left pending.");
                     persistTaskSnapshot(progress);
@@ -1190,7 +1432,7 @@ public class DownloadService {
                 Path chapterFolder = workingTitleFolder.resolve("temp_" + chapterNumber);
                 int pageCount = saveImagesToFolder(pageUrls, chapterFolder, naming, titleRecord, chapterNumber);
                 if (pageCount <= 0) {
-                    logger.warn("DOWNLOAD", "⚠️ No files were saved for chapter " + chapterNumber + ". Leaving it pending.");
+                    logger.warn("DOWNLOAD", "No files were saved for chapter " + chapterNumber + ". Leaving it pending.");
                     failedChapters.add(chapterNumber);
                     progress.setMessage("Chapter " + chapterNumber + " did not finish downloading. It will be left pending.");
                     persistTaskSnapshot(progress);
@@ -1204,7 +1446,14 @@ public class DownloadService {
                 deleteFolder(chapterFolder);
                 downloadedAnyChapters = true;
 
-                logger.info("DOWNLOAD", "📦 Saved [" + cbzName + "] with " + pageCount + " pages at " + cbzPath);
+                logger.debug(
+                        "DOWNLOAD",
+                        "Saved chapter archive | title=" + sanitizeForLog(titleName)
+                                + " | chapterNumber=" + sanitizeForLog(chapterNumber)
+                                + " | pages=" + pageCount
+                                + " | file=" + sanitizeForLog(cbzName)
+                                + " | path=" + sanitizeForLog(cbzPath.toString())
+                );
 
                 progress.chapterCompleted(chapterNumber);
                 progress.setMessage("Downloaded chapter " + chapterNumber + ".");
@@ -1232,15 +1481,28 @@ public class DownloadService {
                 result.setStatus("✅ Download completed.");
                 progress.setMessage("Download completed.");
                 progress.markCompleted();
+                logger.info(
+                        "DOWNLOAD",
+                        "Download completed | title=" + sanitizeForLog(titleName)
+                                + " | completedChapters=" + progress.getCompletedChapters()
+                                + "/" + progress.getTotalChapters()
+                );
             } else {
                 String failureMessage = "Download interrupted with pending chapters: " + String.join(", ", failedChapters);
                 result.setStatus("⚠️ Download interrupted.");
                 progress.markInterrupted(failureMessage);
+                logger.info(
+                        "DOWNLOAD",
+                        "Download interrupted | title=" + sanitizeForLog(titleName)
+                                + " | completedChapters=" + progress.getCompletedChapters()
+                                + "/" + progress.getTotalChapters()
+                                + " | pendingChapters=" + sanitizeForLog(String.join(", ", failedChapters))
+                );
             }
             persistTaskSnapshot(progress);
 
         } catch (Exception e) {
-            logger.error("DOWNLOAD", "❌ Download failed for [" + titleName + "]: " + e.getMessage(), e);
+            logger.error("DOWNLOAD", "Download failed for [" + titleName + "]: " + e.getMessage(), e);
             progress.markFailed(e.getMessage());
             persistTaskSnapshot(progress);
         } finally {
@@ -1319,7 +1581,7 @@ public class DownloadService {
             );
             vaultService.setRedisValue(CURRENT_TASK_REDIS_KEY, document);
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to persist Raven task snapshot: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Failed to persist Raven task snapshot: " + e.getMessage());
         }
     }
 
@@ -1368,6 +1630,11 @@ public class DownloadService {
 
         progress.markPaused("Pause requested before download started. Task saved for later.");
         persistTaskSnapshot(progress);
+        logger.info(
+                "DOWNLOAD",
+                "Paused download before start | title=" + sanitizeForLog(titleName)
+                        + " | taskId=" + sanitizeForLog(progress.getTaskId())
+        );
         return true;
     }
 
@@ -1383,6 +1650,11 @@ public class DownloadService {
 
         progress.markPaused(buildPauseMessage(remaining));
         persistTaskSnapshot(progress);
+        logger.info(
+                "DOWNLOAD",
+                "Paused download | title=" + sanitizeForLog(titleName)
+                        + " | remainingChapters=" + remaining.size()
+        );
         return true;
     }
 
@@ -1519,7 +1791,7 @@ public class DownloadService {
                 return chapters;
             } catch (StaleElementReferenceException e) {
                 attempts++;
-                logger.warn("SCRAPER", "⚠️ Stale element detected, retrying (" + attempts + "/3)");
+                logger.warn("SCRAPER", "Stale element detected, retrying (" + attempts + "/3)");
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
                 logger.debug(
                         "SCRAPER",
@@ -1599,7 +1871,7 @@ public class DownloadService {
         try {
             return new URL(url).getHost();
         } catch (Exception e) {
-            logger.warn("DOWNLOAD", "⚠️ Failed to parse domain from URL: " + url);
+            logger.warn("DOWNLOAD", "Failed to parse domain from URL: " + url);
             return "unknown";
         }
     }
@@ -1931,16 +2203,16 @@ public class DownloadService {
 
                     try (InputStream in = connection.getInputStream()) {
                         copyInputStreamToFileWithRateLimit(in, path, workerRateLimitKbps);
-                        logger.info("DOWNLOAD", "➕ Saved image: " + path);
+                        logger.debug("DOWNLOAD", "Saved image | path=" + sanitizeForLog(path.toString()));
                         count++;
                     }
                 } catch (IOException e) {
-                    logger.error("DOWNLOAD", "❌ Failed image download: " + e.getMessage(), e);
+                    logger.error("DOWNLOAD", "Failed image download: " + e.getMessage(), e);
                 }
                 index++;
             }
         } catch (IOException e) {
-            logger.error("DOWNLOAD", "❌ Failed to save images: " + e.getMessage(), e);
+            logger.error("DOWNLOAD", "Failed to save images: " + e.getMessage(), e);
         }
 
         return count;
@@ -2010,11 +2282,11 @@ public class DownloadService {
                     in.transferTo(zipOut);
                     zipOut.closeEntry();
                 } catch (IOException e) {
-                    logger.error("DOWNLOAD", "❌ Failed adding file to CBZ: " + e.getMessage(), e);
+                    logger.error("DOWNLOAD", "Failed adding file to CBZ: " + e.getMessage(), e);
                 }
             });
         } catch (IOException e) {
-            logger.error("DOWNLOAD", "❌ Failed to create CBZ: " + e.getMessage(), e);
+            logger.error("DOWNLOAD", "Failed to create CBZ: " + e.getMessage(), e);
         }
     }
 
@@ -2024,12 +2296,12 @@ public class DownloadService {
                 try {
                     Files.delete(path);
                 } catch (IOException e) {
-                    logger.warn("DOWNLOAD", "⚠️ Failed to delete " + path + ": " + e.getMessage());
+                    logger.warn("DOWNLOAD", "Failed to delete " + path + ": " + e.getMessage());
                 }
             });
-            logger.info("DOWNLOAD", "🗑️ Deleted temp folder: " + folderPath);
+            logger.debug("DOWNLOAD", "Deleted temp folder | path=" + sanitizeForLog(folderPath.toString()));
         } catch (IOException e) {
-            logger.warn("DOWNLOAD", "⚠️ Failed to delete folder: " + e.getMessage());
+            logger.warn("DOWNLOAD", "Failed to delete folder: " + e.getMessage());
         }
     }
 
@@ -2208,7 +2480,7 @@ public class DownloadService {
         }
 
         lastSnapshotWarningAtMs = now;
-        logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to load cached Raven task snapshot: " + error.getMessage());
+        logger.warn("DOWNLOAD_SERVICE", "Failed to load cached Raven task snapshot: " + error.getMessage());
     }
 
     /**
@@ -2331,7 +2603,7 @@ public class DownloadService {
                 vaultService.deleteRedisValue(CURRENT_TASK_REDIS_KEY);
             }
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to clear persisted Raven status: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Failed to clear persisted Raven status: " + e.getMessage());
         }
 
         logger.debug("DOWNLOAD_SERVICE", "Cleared progress entry for title=" + sanitizeForLog(titleName));
@@ -2356,7 +2628,7 @@ public class DownloadService {
                 }
             }
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to load persisted tasks for clear-all: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Failed to load persisted tasks for clear-all: " + e.getMessage());
         }
 
         // 1. Mark active in-memory tasks for pause
@@ -2381,10 +2653,10 @@ public class DownloadService {
             }
             vaultService.deleteRedisValue(CURRENT_TASK_REDIS_KEY);
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to clear persisted Raven status in bulk: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Failed to clear persisted Raven status in bulk: " + e.getMessage());
         }
 
-        logger.info("DOWNLOAD_SERVICE", "🧹 Cleared " + titlesToClear.size() + " download task(s).");
+        logger.info("DOWNLOAD_SERVICE", "Cleared " + titlesToClear.size() + " download task(s).");
     }
 
     /**
@@ -2412,7 +2684,7 @@ public class DownloadService {
                 }
             }
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to load persisted tasks for clear-history: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Failed to load persisted tasks for clear-history: " + e.getMessage());
         }
 
         // 1. Clear memory state
@@ -2432,10 +2704,10 @@ public class DownloadService {
                 vaultService.delete(TASK_COLLECTION, Map.of("taskId", Map.of("$in", new ArrayList<>(taskIdsToDelete))));
             }
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to clear persisted Raven history in bulk: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Failed to clear persisted Raven history in bulk: " + e.getMessage());
         }
 
-        logger.info("DOWNLOAD_SERVICE", "🧹 Cleared " + titlesToClear.size() + " download history entry(s).");
+        logger.info("DOWNLOAD_SERVICE", "Cleared " + titlesToClear.size() + " download history entry(s).");
     }
 
     /**
@@ -2553,7 +2825,7 @@ public class DownloadService {
             reconcileActiveWorkerProcesses();
             dispatchQueuedProcessWorkers();
         } catch (Exception e) {
-            logger.warn("DOWNLOAD_SERVICE", "⚠️ Raven worker supervisor tick failed: " + e.getMessage());
+            logger.warn("DOWNLOAD_SERVICE", "Raven worker supervisor tick failed: " + e.getMessage());
         }
     }
 
@@ -2573,12 +2845,15 @@ public class DownloadService {
                 return;
             }
 
-            List<DownloadProgress> queuedTasks = loadPersistedTasks(List.of("queued", "recovering"));
+            List<DownloadProgress> queuedTasks = collapseDuplicateRestorableTasksByTitle(
+                    loadPersistedTasks(List.of("queued", "recovering")),
+                    activeWorkerProcesses.keySet(),
+                    "process-dispatch"
+            );
             if (queuedTasks.isEmpty()) {
                 return;
             }
 
-            queuedTasks.sort(Comparator.comparingLong(DownloadProgress::getQueuedAt));
             List<Integer> cpuCoreIds = getWorkerCpuCoreIds();
             int maxWorkers = getConfiguredDownloadThreads();
             for (DownloadProgress progress : queuedTasks) {
@@ -2635,7 +2910,7 @@ public class DownloadService {
                     workerSlots.remove(workerIndex);
                     progress.markInterrupted("Failed to launch Raven worker process: " + e.getMessage());
                     persistTaskSnapshot(progress);
-                    logger.warn("DOWNLOAD_SERVICE", "⚠️ Failed to launch Raven worker process: " + e.getMessage());
+                    logger.warn("DOWNLOAD_SERVICE", "Failed to launch Raven worker process: " + e.getMessage());
                 }
             }
         }
@@ -2850,7 +3125,7 @@ public class DownloadService {
                     .findFirst();
 
             if (match.isEmpty()) {
-                logger.warn("DOWNLOAD", "⚠️ Chapter " + chapterNumber + " not found for " + title.getTitleName());
+                logger.warn("DOWNLOAD", "Chapter " + chapterNumber + " not found for " + title.getTitleName());
                 return false;
             }
 
@@ -2868,7 +3143,7 @@ public class DownloadService {
             List<String> pages = sourceFinder.findSource(chapter.get("href"));
 
             if (pages.isEmpty()) {
-                logger.warn("DOWNLOAD", "⚠️ No pages found for chapter " + chapterNumber);
+                logger.warn("DOWNLOAD", "No pages found for chapter " + chapterNumber);
                 if (progress != null) {
                     progress.setMessage("Chapter " + chapterNumber + " could not be resolved.");
                     persistTaskSnapshot(progress);
@@ -2881,7 +3156,7 @@ public class DownloadService {
             Files.createDirectories(workingTitleFolder);
             int count = saveImagesToFolder(pages, chapterFolder, naming, title, chapterNumber);
             if (count <= 0) {
-                logger.warn("DOWNLOAD", "⚠️ No files were saved for chapter " + chapterNumber);
+                logger.warn("DOWNLOAD", "No files were saved for chapter " + chapterNumber);
                 if (progress != null) {
                     progress.setMessage("Chapter " + chapterNumber + " did not finish downloading.");
                     persistTaskSnapshot(progress);
@@ -2904,10 +3179,10 @@ public class DownloadService {
                 persistTaskSnapshot(progress);
             }
 
-            logger.info("DOWNLOAD", "📦 Saved " + cbzName + " at " + cbzPath);
+            logger.debug("DOWNLOAD", "Saved chapter archive | file=" + sanitizeForLog(cbzName) + " | path=" + sanitizeForLog(cbzPath.toString()));
 
         } catch (Exception e) {
-            logger.error("DOWNLOAD", "❌ Failed single chapter download: " + e.getMessage(), e);
+            logger.error("DOWNLOAD", "Failed single chapter download: " + e.getMessage(), e);
             if (progress != null) {
                 progress.setMessage("Chapter " + chapterNumber + " failed: " + e.getMessage());
                 persistTaskSnapshot(progress);

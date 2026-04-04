@@ -15,6 +15,7 @@ export const SETUP_PROFILE_VERSION = 3;
  * @property {string} [kavitaAdminPassword]
  * @property {string} [kavitaSharedLibraryPath]
  * @property {SetupIntegrationMode} [komfMode]
+ * @property {string} [komfBaseUrl]
  */
 
 const normalizeString = (value) => (typeof value === 'string' ? value : '');
@@ -100,6 +101,7 @@ export const buildSetupProfileSnapshot = ({
             clientId: trimString(getEnvValue(sourceValues, 'noona-portal', 'DISCORD_CLIENT_ID')),
             clientSecret: normalizeString(getEnvValue(sourceValues, 'noona-portal', 'DISCORD_CLIENT_SECRET')),
             guildId: trimString(getEnvValue(sourceValues, 'noona-portal', 'DISCORD_GUILD_ID')),
+            requiredGuildId: trimString(getEnvValue(sourceValues, 'noona-portal', 'REQUIRED_GUILD_ID')),
             guildRoleId: trimString(getEnvValue(sourceValues, 'noona-portal', 'DISCORD_GUILD_ROLE_ID')),
             defaultRoleId: trimString(getEnvValue(sourceValues, 'noona-portal', 'DISCORD_DEFAULT_ROLE_ID')),
             superuserId: trimString(getEnvValue(sourceValues, 'noona-portal', 'DISCORD_SUPERUSER_ID')),
@@ -129,6 +131,7 @@ export const deriveSetupProfileValues = ({
                                              kavitaAdminPassword = '',
                                              kavitaSharedLibraryPath = '',
                                              komfMode = 'managed',
+                                             komfBaseUrl = '',
                                          } = {}) => {
     const nextValues = cloneValues(values);
     const sourceServiceNames =
@@ -156,6 +159,7 @@ export const deriveSetupProfileValues = ({
     mergeEnv('noona-portal', {
         KAVITA_BASE_URL: resolvedKavitaBaseUrl,
         KAVITA_API_KEY: trimString(kavitaApiKey),
+        KOMF_BASE_URL: komfMode === 'external' ? trimString(komfBaseUrl) : '',
     });
     mergeEnv('noona-raven', {
         KAVITA_DATA_MOUNT: kavitaMode === 'external' ? trimString(kavitaSharedLibraryPath) : '',
@@ -192,6 +196,7 @@ export const hydrateSetupProfileState = ({
     setEnvValue(nextValues, 'noona-portal', 'DISCORD_CLIENT_ID', normalizeString(discord.clientId));
     setEnvValue(nextValues, 'noona-portal', 'DISCORD_CLIENT_SECRET', normalizeString(discord.clientSecret));
     setEnvValue(nextValues, 'noona-portal', 'DISCORD_GUILD_ID', normalizeString(discord.guildId));
+    setEnvValue(nextValues, 'noona-portal', 'REQUIRED_GUILD_ID', normalizeString(discord.requiredGuildId));
     setEnvValue(nextValues, 'noona-portal', 'DISCORD_GUILD_ROLE_ID', normalizeString(discord.guildRoleId));
     setEnvValue(nextValues, 'noona-portal', 'DISCORD_DEFAULT_ROLE_ID', normalizeString(discord.defaultRoleId));
     setEnvValue(nextValues, 'noona-portal', 'DISCORD_SUPERUSER_ID', normalizeString(discord.superuserId));

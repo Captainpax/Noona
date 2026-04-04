@@ -702,8 +702,6 @@ export const createSageApp = ({
         provider: 'pia',
         enabled: false,
         onlyDownloadWhenVpnOn: false,
-        autoRotate: true,
-        rotateEveryMinutes: 30,
         region: 'us_california',
         piaUsername: '',
         piaPassword: '',
@@ -968,13 +966,6 @@ export const createSageApp = ({
         const normalized = normalizeString(value).toLowerCase()
         return normalized || DEFAULT_DOWNLOAD_VPN_SETTINGS.region
     }
-    const normalizeVpnRotateEveryMinutes = (value, fallback = DEFAULT_DOWNLOAD_VPN_SETTINGS.rotateEveryMinutes) => {
-        const parsed = Number(value)
-        if (!Number.isFinite(parsed)) {
-            return Math.max(1, Math.min(1440, Math.floor(fallback)))
-        }
-        return Math.max(1, Math.min(1440, Math.floor(parsed)))
-    }
     const hasNonEmptyDiscordOnboardingTemplate = (value) =>
         typeof value === 'string' && value.trim().length > 0
     const sanitizeDownloadVpnSettingsForResponse = (settings = {}) => {
@@ -985,8 +976,6 @@ export const createSageApp = ({
             provider: normalizeVpnProvider(settings?.provider),
             enabled: parseBooleanInput(settings?.enabled) === true,
             onlyDownloadWhenVpnOn: parseBooleanInput(settings?.onlyDownloadWhenVpnOn) === true,
-            autoRotate: parseBooleanInput(settings?.autoRotate) !== false,
-            rotateEveryMinutes: normalizeVpnRotateEveryMinutes(settings?.rotateEveryMinutes),
             region: normalizeVpnRegion(settings?.region),
             piaUsername: normalizeString(settings?.piaUsername),
             piaPassword: maskedPassword,
@@ -2160,12 +2149,14 @@ export const createSageApp = ({
                         enabled: parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.enabled) === true,
                         onlyDownloadWhenVpnOn:
                             parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.onlyDownloadWhenVpnOn) === true,
-                        autoRotate: parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.autoRotate) !== false,
-                        rotateEveryMinutes: normalizeVpnRotateEveryMinutes(DEFAULT_DOWNLOAD_VPN_SETTINGS.rotateEveryMinutes),
                         region: normalizeVpnRegion(DEFAULT_DOWNLOAD_VPN_SETTINGS.region),
                         piaUsername: normalizeString(DEFAULT_DOWNLOAD_VPN_SETTINGS.piaUsername),
                         piaPassword: normalizeString(DEFAULT_DOWNLOAD_VPN_SETTINGS.piaPassword),
                         updatedAt: timestamp,
+                    },
+                    $unset: {
+                        autoRotate: '',
+                        rotateEveryMinutes: '',
                     },
                 },
                 {upsert: true},
@@ -2263,6 +2254,106 @@ export const createSageApp = ({
 
         return next
     }
+    const readNamingSettings = async () => {
+        const fallbackSettings = {
+            ...DEFAULT_NAMING_SETTINGS,
+            updatedAt: null,
+        }
+        if (!vaultClient?.mongo?.findOne) {
+            return fallbackSettings
+        }
+
+        let doc = null
+        try {
+            doc = await vaultClient.mongo.findOne(settingsCollection, {
+                key: DEFAULT_NAMING_SETTINGS.key,
+            })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            logger.warn?.(`[${serviceName}] Failed to read naming settings from Vault; using defaults: ${message}`)
+            return fallbackSettings
+        }
+
+        return {
+            key: DEFAULT_NAMING_SETTINGS.key,
+            titleTemplate:
+                typeof doc?.titleTemplate === 'string' && doc.titleTemplate.trim()
+                    ? doc.titleTemplate.trim()
+                    : DEFAULT_NAMING_SETTINGS.titleTemplate,
+            chapterTemplate:
+                typeof doc?.chapterTemplate === 'string' && doc.chapterTemplate.trim()
+                    ? doc.chapterTemplate.trim()
+                    : DEFAULT_NAMING_SETTINGS.chapterTemplate,
+            pageTemplate:
+                typeof doc?.pageTemplate === 'string' && doc.pageTemplate.trim()
+                    ? doc.pageTemplate.trim()
+                    : DEFAULT_NAMING_SETTINGS.pageTemplate,
+            pagePad:
+                Number.isFinite(Number(doc?.pagePad)) && Number(doc.pagePad) > 0
+                    ? Math.floor(Number(doc.pagePad))
+                    : DEFAULT_NAMING_SETTINGS.pagePad,
+            chapterPad:
+                Number.isFinite(Number(doc?.chapterPad)) && Number(doc.chapterPad) > 0
+                    ? Math.floor(Number(doc.chapterPad))
+                    : DEFAULT_NAMING_SETTINGS.chapterPad,
+            volumePad:
+                Number.isFinite(Number(doc?.volumePad)) && Number(doc.volumePad) > 0
+                    ? Math.floor(Number(doc.volumePad))
+                    : DEFAULT_NAMING_SETTINGS.volumePad,
+            updatedAt: normalizeString(doc?.updatedAt) || null,
+        }
+    }
+    const writeNamingSettings = async (payload = {}) => {
+        if (!vaultClient?.mongo?.update) {
+            throw new Error('Vault storage is not configured.')
+        }
+
+        const current = await readNamingSettings()
+        const next = {
+            key: DEFAULT_NAMING_SETTINGS.key,
+            titleTemplate:
+                typeof payload?.titleTemplate === 'string' && payload.titleTemplate.trim()
+                    ? payload.titleTemplate.trim()
+                    : current.titleTemplate,
+            chapterTemplate:
+                typeof payload?.chapterTemplate === 'string' && payload.chapterTemplate.trim()
+                    ? payload.chapterTemplate.trim()
+                    : current.chapterTemplate,
+            pageTemplate:
+                typeof payload?.pageTemplate === 'string' && payload.pageTemplate.trim()
+                    ? payload.pageTemplate.trim()
+                    : current.pageTemplate,
+            pagePad: Number.isFinite(Number(payload?.pagePad))
+                ? Math.max(1, Math.min(12, Math.floor(Number(payload.pagePad))))
+                : current.pagePad,
+            chapterPad: Number.isFinite(Number(payload?.chapterPad))
+                ? Math.max(1, Math.min(12, Math.floor(Number(payload.chapterPad))))
+                : current.chapterPad,
+            volumePad: Number.isFinite(Number(payload?.volumePad))
+                ? Math.max(1, Math.min(12, Math.floor(Number(payload.volumePad))))
+                : current.volumePad,
+        }
+
+        if (!next.titleTemplate) {
+            throw new Error('titleTemplate must not be empty.')
+        }
+        if (!next.chapterTemplate) {
+            throw new Error('chapterTemplate must not be empty.')
+        }
+        if (!next.pageTemplate) {
+            throw new Error('pageTemplate must not be empty.')
+        }
+
+        const updatedAt = new Date().toISOString()
+        await vaultClient.mongo.update(
+            settingsCollection,
+            {key: DEFAULT_NAMING_SETTINGS.key},
+            {$set: {...next, updatedAt}},
+            {upsert: true},
+        )
+
+        return {...next, updatedAt}
+    }
     const readDownloadWorkerSettings = async () => {
         const slotCount = await resolveDownloadWorkerSlotCount()
         if (!vaultClient?.mongo?.findOne) {
@@ -2346,36 +2437,37 @@ export const createSageApp = ({
         }
     }
     const readDownloadVpnSettings = async () => {
+        const fallbackSettings = {
+            ...DEFAULT_DOWNLOAD_VPN_SETTINGS,
+            provider: normalizeVpnProvider(DEFAULT_DOWNLOAD_VPN_SETTINGS.provider),
+            enabled: parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.enabled) === true,
+            onlyDownloadWhenVpnOn:
+                parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.onlyDownloadWhenVpnOn) === true,
+            region: normalizeVpnRegion(DEFAULT_DOWNLOAD_VPN_SETTINGS.region),
+            piaUsername: normalizeString(DEFAULT_DOWNLOAD_VPN_SETTINGS.piaUsername),
+            piaPassword: normalizeString(DEFAULT_DOWNLOAD_VPN_SETTINGS.piaPassword),
+            updatedAt: null,
+        }
         if (!vaultClient?.mongo?.findOne) {
-            return {
-                ...DEFAULT_DOWNLOAD_VPN_SETTINGS,
-                provider: normalizeVpnProvider(DEFAULT_DOWNLOAD_VPN_SETTINGS.provider),
-                enabled: parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.enabled) === true,
-                onlyDownloadWhenVpnOn:
-                    parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.onlyDownloadWhenVpnOn) === true,
-                autoRotate: parseBooleanInput(DEFAULT_DOWNLOAD_VPN_SETTINGS.autoRotate) !== false,
-                rotateEveryMinutes: normalizeVpnRotateEveryMinutes(DEFAULT_DOWNLOAD_VPN_SETTINGS.rotateEveryMinutes),
-                region: normalizeVpnRegion(DEFAULT_DOWNLOAD_VPN_SETTINGS.region),
-                piaUsername: normalizeString(DEFAULT_DOWNLOAD_VPN_SETTINGS.piaUsername),
-                piaPassword: normalizeString(DEFAULT_DOWNLOAD_VPN_SETTINGS.piaPassword),
-                updatedAt: null,
-            }
+            return fallbackSettings
         }
 
-        const doc = await vaultClient.mongo.findOne(settingsCollection, {
-            key: DEFAULT_DOWNLOAD_VPN_SETTINGS.key,
-        })
+        let doc = null
+        try {
+            doc = await vaultClient.mongo.findOne(settingsCollection, {
+                key: DEFAULT_DOWNLOAD_VPN_SETTINGS.key,
+            })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            logger.warn?.(`[${serviceName}] Failed to read VPN settings from Vault; using defaults: ${message}`)
+            return fallbackSettings
+        }
 
         return {
             key: DEFAULT_DOWNLOAD_VPN_SETTINGS.key,
             provider: normalizeVpnProvider(doc?.provider ?? DEFAULT_DOWNLOAD_VPN_SETTINGS.provider),
             enabled: parseBooleanInput(doc?.enabled) === true,
             onlyDownloadWhenVpnOn: parseBooleanInput(doc?.onlyDownloadWhenVpnOn) === true,
-            autoRotate: parseBooleanInput(doc?.autoRotate) !== false,
-            rotateEveryMinutes: normalizeVpnRotateEveryMinutes(
-                doc?.rotateEveryMinutes,
-                DEFAULT_DOWNLOAD_VPN_SETTINGS.rotateEveryMinutes,
-            ),
             region: normalizeVpnRegion(doc?.region ?? DEFAULT_DOWNLOAD_VPN_SETTINGS.region),
             piaUsername: normalizeString(doc?.piaUsername),
             piaPassword: normalizeString(doc?.piaPassword),
@@ -2396,16 +2488,8 @@ export const createSageApp = ({
             const parsed = parseBooleanInput(payload?.onlyDownloadWhenVpnOn)
             return parsed == null ? parseBooleanInput(current.onlyDownloadWhenVpnOn) === true : parsed
         })()
-        const nextAutoRotate = (() => {
-            const parsed = parseBooleanInput(payload?.autoRotate)
-            return parsed == null ? current.autoRotate : parsed
-        })()
         const nextProvider = validateVpnProvider(payload?.provider ?? current.provider)
         const nextRegion = normalizeVpnRegion(payload?.region ?? current.region)
-        const nextRotateEveryMinutes = normalizeVpnRotateEveryMinutes(
-            payload?.rotateEveryMinutes,
-            current.rotateEveryMinutes,
-        )
         const nextPiaUsername = (() => {
             if (typeof payload?.piaUsername === 'string') {
                 return normalizeString(payload.piaUsername)
@@ -2437,8 +2521,6 @@ export const createSageApp = ({
             provider: nextProvider,
             enabled: nextEnabled,
             onlyDownloadWhenVpnOn: nextOnlyDownloadWhenVpnOn,
-            autoRotate: nextAutoRotate,
-            rotateEveryMinutes: nextRotateEveryMinutes,
             region: nextRegion,
             piaUsername: nextPiaUsername,
             piaPassword: nextPiaPassword,
@@ -2448,7 +2530,13 @@ export const createSageApp = ({
         await vaultClient.mongo.update(
             settingsCollection,
             {key: DEFAULT_DOWNLOAD_VPN_SETTINGS.key},
-            {$set: next},
+            {
+                $set: next,
+                $unset: {
+                    autoRotate: '',
+                    rotateEveryMinutes: '',
+                },
+            },
             {upsert: true},
         )
 
@@ -3136,6 +3224,7 @@ export const createSageApp = ({
         readDiscordOnboardingMessageSetting,
         readDefaultMemberPermissions,
         readDebugSetting,
+        readNamingSettings,
         readDownloadWorkerSettings,
         readDownloadVpnSettings,
         readDiscordAuthConfig,
@@ -3176,6 +3265,7 @@ export const createSageApp = ({
         wizardStateClient,
         writeDiscordOnboardingMessageSetting,
         writeDefaultMemberPermissions,
+        writeNamingSettings,
         writeDownloadWorkerSettings,
         writeDownloadVpnSettings,
         writeDiscordAdminToVault,

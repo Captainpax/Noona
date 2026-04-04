@@ -4,7 +4,7 @@
  * - src/main/java/com/paxkun/raven/service/LoggerService.java
  * - src/test/java/com/paxkun/raven/service/DownloadServiceTest.java
  * - src/test/java/com/paxkun/raven/service/download/TitleScraperTest.java
- * Times this file has been edited: 17
+ * Times this file has been edited: 19
  */
 package com.paxkun.raven.service.download;
 
@@ -82,14 +82,14 @@ public class TitleScraper {
                 Map<String, String> data = new HashMap<>(parsed);
                 data.put("index", String.valueOf(index));
                 results.add(data);
-                logger.info("SCRAPER", "[" + index + "] " + data.get("title") + " -> " + href);
+                logger.debug("SCRAPER", "Accepted search result [" + index + "] " + data.get("title") + " -> " + href);
                 index++;
             }
 
             lastSearchResults = results;
 
         } catch (Exception e) {
-            logger.error("SCRAPER", "❌ Error searching manga: " + e.getMessage(), e);
+            logger.error("SCRAPER", "Error searching manga: " + e.getMessage(), e);
         }
 
         return results;
@@ -234,7 +234,7 @@ public class TitleScraper {
         try {
             String listUrl = resolveFullChapterListUrl(titleUrl);
             if (listUrl == null || listUrl.isBlank()) {
-                logger.warn("SCRAPER", "⚠️ Unable to resolve full chapter list URL for: " + titleUrl);
+                logger.warn("SCRAPER", "Unable to resolve full chapter list URL for: " + titleUrl);
                 return List.of();
             }
 
@@ -245,7 +245,7 @@ public class TitleScraper {
                     .get();
 
             Elements chapterLinks = doc.select("a[href^=https://weebcentral.com/chapters/]");
-            logger.info("SCRAPER", "Found " + chapterLinks.size() + " chapter links for URL: " + titleUrl);
+            logger.debug("SCRAPER", "Found " + chapterLinks.size() + " chapter links for URL: " + titleUrl);
 
             for (int index = 0; index < chapterLinks.size(); index++) {
                 Element chapter = chapterLinks.get(index);
@@ -261,7 +261,7 @@ public class TitleScraper {
             }
 
         } catch (Exception e) {
-            logger.error("SCRAPER", "❌ Error scraping chapters: " + e.getMessage(), e);
+            logger.error("SCRAPER", "Error scraping chapters: " + e.getMessage(), e);
         }
 
         List<Map<String, String>> chapters = dedupeExactChapters(rawChapters);
@@ -322,7 +322,7 @@ public class TitleScraper {
             details.setRelatedSeries(relatedSeries);
             return details;
         } catch (Exception e) {
-            logger.warn("SCRAPER", "âš ï¸ Failed to fetch summary: " + e.getMessage());
+            logger.warn("SCRAPER", "Failed to fetch summary: " + e.getMessage());
             return null;
         }
     }

@@ -37,8 +37,12 @@ Important Noona assumptions:
 
 - standalone metadata search uses Komf first when configured
 - title-match apply uses Komf identify when a provider result is chosen
-- admin-facing failure text explicitly tells people to check Komf `/config/application.yml metadataProviders`
-- some failure text also tells admins to restart `noona-komf` and, in Kavita metadata cases, `noona-kavita`
+- admin-facing failure text should point at the managed `noona-komf` container only when Portal is using the default
+  managed base URL
+- when Portal uses an external `KOMF_BASE_URL`, failure text should mention that configured URL instead of telling
+  admins to restart `noona-komf`
+- Kavita fallback failures may still mention `noona-kavita`, but the Komf part of the guidance should follow the same
+  managed-vs-external rule
 
 If you change route paths, payloads, or error shape, update both the Portal client and the Portal route-layer messaging.
 
@@ -71,6 +75,8 @@ Important behavior:
 
 - `KOMF_APPLICATION_YML` is hidden from the generic env-field list and edited through the dedicated Komf editor
 - `KOMF_KAVITA_API_KEY` is hidden in managed Kavita mode because Noona derives it from the managed install flow
+- `komf.baseUrl` is top-level setup-profile metadata and should only derive Portal's `KOMF_BASE_URL` when Komf is
+  external
 - advanced/debug views can still expose lower-level detail, so raw YAML remains part of the supported troubleshooting
   path
 

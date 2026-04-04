@@ -3,7 +3,7 @@
  * Related files:
  * - src/main/java/com/paxkun/raven/service/LoggerService.java
  * - src/test/java/com/paxkun/raven/service/DownloadServiceTest.java
- * Times this file has been edited: 16
+ * Times this file has been edited: 17
  */
 package com.paxkun.raven.service.download;
 
@@ -69,15 +69,15 @@ public class SourceFinder {
         ScraperFunction scraper = scrapers.get(domain);
         logger.debug("SOURCE", "Scraper function resolved: " + (scraper != null ? "registered handler" : "none"));
         if (scraper != null) {
-            logger.info("SOURCE", "🔍 Using scraper for domain: " + domain);
+            logger.debug("SOURCE", "Using scraper | domain=" + domain);
             imageUrls = scraper.scrape(chapterUrl);
         } else {
-            logger.warn("SOURCE", "⚠️ No scraper registered for domain: " + domain + ". Attempting default strategy.");
+            logger.warn("SOURCE", "No scraper registered for domain: " + domain + ". Attempting default strategy.");
             imageUrls = defaultScrape(chapterUrl);
             logger.debug("SOURCE", "Default fallback strategy triggered for domain: " + domain);
         }
 
-        logger.info("SOURCE", "📄 Total pages scraped: " + imageUrls.size());
+        logger.debug("SOURCE", "Resolved page image count | count=" + imageUrls.size());
         return imageUrls;
     }
 
@@ -107,12 +107,12 @@ public class SourceFinder {
                 String src = img.getAttribute("src");
                 if (src != null && !src.isEmpty()) {
                     imageUrls.add(src);
-                    logger.info("SOURCE", "🖼️ Found image: " + src);
+                    logger.debug("SOURCE", "Found image | url=" + src);
                 }
             }
 
         } catch (Exception e) {
-            logger.error("SOURCE", "❌ Default scrape failed for: " + chapterUrl + " | " + e.getMessage(), e);
+            logger.error("SOURCE", "Default scrape failed for: " + chapterUrl + " | " + e.getMessage(), e);
         } finally {
             driver.quit();
         }
@@ -159,7 +159,7 @@ public class SourceFinder {
 
             return urls;
         } catch (Exception e) {
-            logger.error("SOURCE", "❌ WeebCentral scrape failed for: " + chapterUrl + " | " + e.getMessage(), e);
+            logger.error("SOURCE", "WeebCentral scrape failed for: " + chapterUrl + " | " + e.getMessage(), e);
             return List.of();
         }
     }
@@ -206,19 +206,19 @@ public class SourceFinder {
             List<WebElement> images = driver.findElements(By.cssSelector(cssSelector));
             logger.debug("SOURCE", "Using selector for generic scrape: " + cssSelector + ", raw elements before filtering: " + images.size());
             if (images.isEmpty()) {
-                logger.warn("SOURCE", "⚠️ No images found with selector: " + cssSelector);
+                logger.warn("SOURCE", "No images found with selector: " + cssSelector);
             } else {
                 for (WebElement img : images) {
                     String src = img.getAttribute("src");
                     if (src != null && !src.isEmpty()) {
                         imageUrls.add(src);
-                        logger.info("SOURCE", "🖼️ Found page image: " + src);
+                        logger.debug("SOURCE", "Found page image | url=" + src);
                     }
                 }
             }
 
         } catch (Exception e) {
-            logger.error("SOURCE", "❌ Scrape failed for " + chapterUrl + " | " + e.getMessage(), e);
+            logger.error("SOURCE", "Scrape failed for " + chapterUrl + " | " + e.getMessage(), e);
         } finally {
             driver.quit();
         }
@@ -233,7 +233,7 @@ public class SourceFinder {
         try {
             return new URL(url).getHost();
         } catch (Exception e) {
-            logger.warn("SOURCE", "⚠️ Failed to extract domain from URL: " + url);
+            logger.warn("SOURCE", "Failed to extract domain from URL: " + url);
             return "unknown";
         }
     }

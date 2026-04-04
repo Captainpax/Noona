@@ -9,6 +9,7 @@ const DISCORD_PORTAL_ENV_KEYS = Object.freeze({
     clientId: 'DISCORD_CLIENT_ID',
     clientSecret: 'DISCORD_CLIENT_SECRET',
     guildId: 'DISCORD_GUILD_ID',
+    requiredGuildId: 'REQUIRED_GUILD_ID',
     guildRoleId: 'DISCORD_GUILD_ROLE_ID',
     defaultRoleId: 'DISCORD_DEFAULT_ROLE_ID',
     superuserId: 'DISCORD_SUPERUSER_ID',
@@ -196,6 +197,7 @@ const createEmptyProfile = () => ({
         clientId: '',
         clientSecret: '',
         guildId: '',
+        requiredGuildId: '',
         guildRoleId: '',
         defaultRoleId: '',
         superuserId: '',
@@ -285,6 +287,7 @@ const normalizePublicProfile = (snapshot = {}, {currentSnapshot = null} = {}) =>
     publicProfile.komf.baseUrl = firstNonEmpty(
         snapshot?.komf?.baseUrl,
         legacyKomf?.baseUrl,
+        legacyValues?.['noona-portal']?.KOMF_BASE_URL,
         currentProfile?.komf?.baseUrl,
     );
     publicProfile.komf.applicationYml = firstNonEmpty(
@@ -313,6 +316,11 @@ const normalizePublicProfile = (snapshot = {}, {currentSnapshot = null} = {}) =>
             snapshot?.discord?.guildId,
             legacyValues?.['noona-portal']?.[DISCORD_PORTAL_ENV_KEYS.guildId],
             currentProfile?.discord?.guildId,
+        ),
+        requiredGuildId: firstNonEmpty(
+            snapshot?.discord?.requiredGuildId,
+            legacyValues?.['noona-portal']?.[DISCORD_PORTAL_ENV_KEYS.requiredGuildId],
+            currentProfile?.discord?.requiredGuildId,
         ),
         guildRoleId: firstNonEmpty(
             snapshot?.discord?.guildRoleId,
@@ -389,10 +397,12 @@ export const deriveSetupProfileInternals = (snapshot = {}) => {
         ...(values['noona-portal'] || {}),
         KAVITA_BASE_URL: kavitaBaseUrl,
         KAVITA_API_KEY: kavitaApiKey,
+        KOMF_BASE_URL: profile.komf.mode === 'external' ? normalizeOptionalString(profile.komf.baseUrl) : '',
         [DISCORD_PORTAL_ENV_KEYS.botToken]: normalizeOptionalString(profile.discord.botToken),
         [DISCORD_PORTAL_ENV_KEYS.clientId]: normalizeOptionalString(profile.discord.clientId),
         [DISCORD_PORTAL_ENV_KEYS.clientSecret]: normalizeOptionalString(profile.discord.clientSecret),
         [DISCORD_PORTAL_ENV_KEYS.guildId]: normalizeOptionalString(profile.discord.guildId),
+        [DISCORD_PORTAL_ENV_KEYS.requiredGuildId]: normalizeOptionalString(profile.discord.requiredGuildId),
         [DISCORD_PORTAL_ENV_KEYS.guildRoleId]: normalizeOptionalString(profile.discord.guildRoleId),
         [DISCORD_PORTAL_ENV_KEYS.defaultRoleId]: normalizeOptionalString(profile.discord.defaultRoleId),
         [DISCORD_PORTAL_ENV_KEYS.superuserId]: normalizeOptionalString(profile.discord.superuserId),
@@ -484,6 +494,7 @@ const cloneProfileValue = (snapshot = {}) => ({
         clientId: normalizeOptionalString(snapshot?.discord?.clientId),
         clientSecret: normalizeOptionalString(snapshot?.discord?.clientSecret),
         guildId: normalizeOptionalString(snapshot?.discord?.guildId),
+        requiredGuildId: normalizeOptionalString(snapshot?.discord?.requiredGuildId),
         guildRoleId: normalizeOptionalString(snapshot?.discord?.guildRoleId),
         defaultRoleId: normalizeOptionalString(snapshot?.discord?.defaultRoleId),
         superuserId: normalizeOptionalString(snapshot?.discord?.superuserId),

@@ -135,6 +135,7 @@ test('noona-portal descriptor exposes Redis and HTTP defaults', async () => {
         ['PORTAL_JOIN_DEFAULT_ROLES', '*,-admin'],
         ['PORTAL_JOIN_DEFAULT_LIBRARIES', '*'],
         ['KAVITA_EXTERNAL_URL', ''],
+        ['KOMF_BASE_URL', ''],
         ['PORTAL_REDIS_NAMESPACE', 'portal:onboarding'],
         ['PORTAL_DM_QUEUE_NAMESPACE', 'portal:discord:dm'],
         ['PORTAL_TOKEN_TTL', '900'],

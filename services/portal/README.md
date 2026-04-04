@@ -19,7 +19,11 @@ and Kavita account handoff features.
 - connects Noona to Discord
 - handles onboarding and recommendation-related messaging
 - optionally accepts a DM-only `downloadall` admin command for one configured Discord superuser
+- registers slash commands into the configured Discord guild while still enforcing the optional `REQUIRED_GUILD_ID`
+  access gate at execution time
 - bridges Moon and Kavita for account and metadata flows
+- targets managed `noona-komf` by default for metadata bridge requests, but can also use an explicit external
+  `KOMF_BASE_URL` override when Moon setup or service config points Portal at a different Komf instance
 - uses Vault's internal service API for shared secrets plus short-lived onboarding and Discord DM queue state
 - exposes the public-facing Portal HTTP endpoints used by the stack
 - keeps the HTTP API available if Discord bot auth fails, while Discord-only features stay disabled until creds are
@@ -33,6 +37,8 @@ and Kavita account handoff features.
 ## When An Admin Needs To Care
 
 - when setting up or changing the Discord bot
+- when slash commands appear in Discord but Portal still denies them because the configured execution gate targets a
+  different guild
 - when configuring or rotating the Discord superuser allowed to run the private `downloadall` DM command
 - when user onboarding or recommendation notifications break
 - when Kavita handoff or metadata bridge features fail

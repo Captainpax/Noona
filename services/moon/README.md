@@ -38,6 +38,10 @@ recommendations, and the day-to-day admin UI.
   flow instead of redirecting an already-started system back to `/bootScreen`
 - keeps the managed Kavita and Discord live preflight on the summary path, where the running services are available for
   browser-facing validation and handoff
+- keeps Portal's `DISCORD_GUILD_ID` and `REQUIRED_GUILD_ID` aligned by default when admins pick or validate a Discord
+  guild during setup or in signed-in settings, while warning when those values intentionally diverge
+- shows read-only Discord slash-command diagnostics during bot validation so admins can spot duplicate global or guild
+  registrations without shell access
 - opens the setup summary with one-shot warnings when those post-install live sync calls fail after the stack is already
   installed, instead of trapping admins on the install tab
 - treats Sage `HTTP 5xx` responses as real upstream failures in setup and settings flows instead of always collapsing
@@ -46,6 +50,8 @@ recommendations, and the day-to-day admin UI.
   reads for a short bounded window so normal backend warm-up does not immediately surface as a browser-facing failure
 - keeps `storageRoot` as top-level setup metadata instead of mirroring raw `NOONA_DATA_ROOT` overrides into saved setup
   JSON
+- saves external Komf URLs as setup-profile metadata and derives Portal's `KOMF_BASE_URL` only when Komf is configured
+  as external, while managed Komf keeps Portal on the default internal `noona-komf` address
 - provides the main settings and operations UI
 - lets admins keep Moon's published URL and optional Sage backend URL in sync from the service-links view when custom
   networking requires it
@@ -84,6 +90,8 @@ recommendations, and the day-to-day admin UI.
 - when adjusting local browser shell preferences like the background music mute and volume controls
 - when checking live in-app toasts that catch users up on music playback, followed-title updates, or recommendation
   decisions after they return to Moon
+- when Discord validation warns that Portal's guild gate differs from the selected command-registration guild or shows
+  duplicate slash-command names
 - when troubleshooting setup, login, or UI-driven service actions
 - when the Downloader VPN card is waiting on a save-triggered apply, manual rotation, or login test to finish and the
   controls stay disabled until Raven reports a settled connection state

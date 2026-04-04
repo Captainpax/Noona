@@ -2,7 +2,7 @@
  * @fileoverview Covers Portal HTTP route contracts and upstream error handling.
  * Related files:
  * - app/createPortalApp.mjs
- * Times this file has been edited: 15
+ * Times this file has been edited: 16
  */
 
 import assert from 'node:assert/strict';
@@ -1722,6 +1722,63 @@ test('metadata match routes return compact operator guidance when Komf fails ser
         const applyPayload = await applyResponse.json();
         assert.equal(applyResponse.status, 500);
         assert.match(applyPayload.error, /restart noona-komf/);
+        assert.equal(applyPayload.details, null);
+    } finally {
+        await stopServer(server);
+    }
+});
+
+test('metadata match routes mention the configured external Komf URL when it fails server-side', async () => {
+    const app = createPortalApp({
+        config: {
+            serviceName: 'noona-portal',
+            discord: {
+                guildId: 'guild-1',
+            },
+            komf: {
+                baseUrl: 'https://komf.example/',
+            },
+        },
+        komf: {
+            searchSeriesMetadata: async () => {
+                throw buildUpstreamError('Komf request failed with status 500', {
+                    details: {message: 'IllegalStateException', stack: 'very large upstream payload'},
+                });
+            },
+            identifySeriesMetadata: async () => {
+                throw buildUpstreamError('Komf request failed with status 500', {
+                    details: {message: 'IllegalStateException', stack: 'very large upstream payload'},
+                });
+            },
+        },
+    });
+    const {server, baseUrl} = await startServer(app);
+
+    try {
+        const lookupResponse = await fetch(`${baseUrl}/api/portal/kavita/title-match`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({seriesId: 17, query: 'Solo Leveling'}),
+        });
+        const lookupPayload = await lookupResponse.json();
+        assert.equal(lookupResponse.status, 500);
+        assert.match(lookupPayload.error, /https:\/\/komf\.example\//);
+        assert.doesNotMatch(lookupPayload.error, /restart noona-komf/);
+        assert.equal(lookupPayload.details, null);
+
+        const applyResponse = await fetch(`${baseUrl}/api/portal/kavita/title-match/apply`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                seriesId: 17,
+                provider: 'MANGADEX',
+                providerSeriesId: '32d76d19-8a05-4db0-9fc2-e0b0648fe9d0',
+            }),
+        });
+        const applyPayload = await applyResponse.json();
+        assert.equal(applyResponse.status, 500);
+        assert.match(applyPayload.error, /https:\/\/komf\.example\//);
+        assert.doesNotMatch(applyPayload.error, /restart noona-komf/);
         assert.equal(applyPayload.details, null);
     } finally {
         await stopServer(server);

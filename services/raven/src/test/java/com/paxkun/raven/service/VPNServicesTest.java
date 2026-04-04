@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/settings/SettingsService.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnRotationResult.java
  * - src/main/java/com/paxkun/raven/service/VPNServices.java
- * Times this file has been edited: 8
+ * Times this file has been edited: 9
  */
 package com.paxkun.raven.service;
 
@@ -233,7 +233,7 @@ class VPNServicesTest {
         when(openVpnProcess.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(true);
         when(settingsService.getDownloadVpnSettingsFresh()).thenAnswer(invocation ->
                 vpnEnabled.get()
-                        ? enabledVpnSettings("us_california", true, true)
+                        ? enabledVpnSettings("us_california", true)
                         : disabledVpnSettings("us_california", true)
         );
         doAnswer(invocation -> {
@@ -263,6 +263,7 @@ class VPNServicesTest {
         assertThat(rotation.ok()).isTrue();
         assertThat(disable.ok()).isTrue();
         assertThat(disable.message()).contains("queued");
+        verify(loggerService).info(eq("VPN"), contains("Queued VPN disable until the active rotation finishes"));
 
         waitForCondition("Timed out waiting for queued VPN disable to finish.", () -> !vpnServices.getStatus().isRotating());
         assertThat(vpnServices.getStatus().isEnabled()).isFalse();
@@ -270,18 +271,19 @@ class VPNServicesTest {
         assertThat(vpnServices.getStatus().getConnectionState()).isEqualTo("disabled");
         assertThat(vpnServices.getStatus().getNextRotationAt()).isNull();
         assertThat(settingsService.getDownloadVpnSettingsFresh().getOnlyDownloadWhenVpnOn()).isTrue();
+        verify(loggerService).info(eq("VPN"), contains("Queued VPN disable applied after VPN rotation"));
         verify(openVpnProcess, atLeastOnce()).destroy();
         vpnServices.stop();
     }
 
     @Test
-    void scheduleTickEnsuresVpnConnectionWhenEnabledWithoutAutoRotate() throws Exception {
+    void scheduleTickEnsuresVpnConnectionWhenEnabledAndLeavesRotationScheduleClear() throws Exception {
         VPNServices vpnServices = spy(new VPNServices(settingsService, downloadService, loggerService));
         List<String> preservedRoutes = List.of("172.18.0.0/16 dev eth0 proto kernel scope link src 172.18.0.2");
         Process openVpnProcess = mock(Process.class);
 
         when(openVpnProcess.isAlive()).thenReturn(true);
-        when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(enabledVpnSettings("us_california", true, false));
+        when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(enabledVpnSettings("us_california", true));
         doNothing().when(downloadService).beginMaintenancePause(anyString());
         when(downloadService.requestPauseActiveDownloads()).thenReturn(new DownloadService.PauseRequestResult(List.of("Solo Leveling"), List.of()));
         when(downloadService.waitForNoActiveDownloads(any())).thenReturn(true);
@@ -307,6 +309,11 @@ class VPNServicesTest {
         inOrder.verify(vpnServices).connectOpenVpn("us_california", "pia-user", "pia-secret");
         inOrder.verify(vpnServices).restoreLocalRouteSpecs(preservedRoutes);
         inOrder.verify(downloadService).resumePausedDownloads(eq(List.of("Solo Leveling")));
+        verify(loggerService).info(eq("VPN"), contains("VPN auto-connect started"));
+        verify(loggerService).info(eq("VPN"), argThat(message ->
+                message.contains("VPN auto-connect succeeded")
+                        && message.contains("pausedTasks=1")
+                        && message.contains("resumedTasks=1")));
     }
 
     @Test
@@ -314,7 +321,7 @@ class VPNServicesTest {
         VPNServices vpnServices = spy(new VPNServices(settingsService, downloadService, loggerService));
         List<String> preservedRoutes = List.of("172.18.0.0/16 dev eth0 proto kernel scope link src 172.18.0.2");
 
-        when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(enabledVpnSettings("us_california", true, false));
+        when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(enabledVpnSettings("us_california", true));
         doNothing().when(downloadService).beginMaintenancePause(anyString());
         when(downloadService.requestPauseActiveDownloads()).thenReturn(new DownloadService.PauseRequestResult(List.of(), List.of()));
         when(downloadService.waitForNoActiveDownloads(any())).thenReturn(true);
@@ -463,6 +470,27 @@ class VPNServicesTest {
         assertThat(result.message()).contains("PIA authentication failed for Raven VPN.");
         assertThat(result.message()).contains("Failed to restore local routes after VPN rotation: route cleanup failed");
         assertThat(vpnServices.getStatus().getLastError()).contains("Failed to restore local routes after VPN rotation: route cleanup failed");
+    }
+
+    @Test
+    void rotateNowInternalIncludesExceptionTypeForBlankFailureAndLogsSingleWarn() throws Exception {
+        VPNServices vpnServices = spy(new VPNServices(settingsService, downloadService, loggerService));
+
+        when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(enabledVpnSettings("us_california"));
+        doNothing().when(downloadService).beginMaintenancePause(anyString());
+        doNothing().when(downloadService).endMaintenancePause(anyString());
+        when(downloadService.requestPauseActiveDownloads()).thenThrow(new UnsupportedOperationException());
+        doReturn("198.51.100.30").when(vpnServices).resolvePublicIp();
+
+        VpnRotationResult result = ReflectionTestUtils.invokeMethod(vpnServices, "rotateNowInternal", "manual", false);
+
+        assertThat(result.ok()).isFalse();
+        assertThat(result.message()).contains("VPN rotation failed while pausing active downloads");
+        assertThat(result.message()).contains("UnsupportedOperationException");
+        assertThat(vpnServices.getStatus().getLastError()).contains("UnsupportedOperationException");
+        verify(loggerService, times(1)).warn(eq("VPN"), argThat(message ->
+                message.contains("VPN rotation failed while pausing active downloads")
+                        && message.contains("UnsupportedOperationException")));
     }
 
     @Test
@@ -685,8 +713,6 @@ class VPNServicesTest {
                 "pia",
                 false,
                 false,
-                false,
-                30,
                 "us_california",
                 "",
                 ""
@@ -700,7 +726,7 @@ class VPNServicesTest {
      * @return The enabled VPN settings snapshot.
      */
     private DownloadVpnSettings enabledVpnSettings(String region) {
-        return enabledVpnSettings(region, false, false);
+        return enabledVpnSettings(region, false);
     }
 
     /**
@@ -716,8 +742,6 @@ class VPNServicesTest {
                 "pia",
                 false,
                 onlyDownloadWhenVpnOn,
-                false,
-                30,
                 region,
                 "pia-user",
                 "pia-secret"
@@ -725,21 +749,18 @@ class VPNServicesTest {
     }
 
     /**
-     * Creates an enabled Raven VPN settings snapshot with configurable download gating and auto-rotation flags.
+     * Creates an enabled Raven VPN settings snapshot with configurable download gating.
      *
      * @param region                The configured Raven VPN region.
      * @param onlyDownloadWhenVpnOn Whether Raven should block downloads until the VPN is connected.
-     * @param autoRotate            Whether Raven should schedule periodic rotations.
      * @return The enabled VPN settings snapshot.
      */
-    private DownloadVpnSettings enabledVpnSettings(String region, boolean onlyDownloadWhenVpnOn, boolean autoRotate) {
+    private DownloadVpnSettings enabledVpnSettings(String region, boolean onlyDownloadWhenVpnOn) {
         return new DownloadVpnSettings(
                 "downloads.vpn",
                 "pia",
                 true,
                 onlyDownloadWhenVpnOn,
-                autoRotate,
-                30,
                 region,
                 "pia-user",
                 "pia-secret"

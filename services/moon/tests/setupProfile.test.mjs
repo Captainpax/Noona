@@ -28,13 +28,15 @@ test("buildSetupProfileSnapshot emits the minimal v3 browser contract", () => {
         kavitaBaseUrl: " https://kavita.example ",
         kavitaApiKey: "secret-key",
         kavitaSharedLibraryPath: " /mnt/manga ",
-        komfMode: "managed",
+        komfMode: "external",
+        komfBaseUrl: " https://komf.example ",
         values: {
             "noona-portal": {
                 DISCORD_BOT_TOKEN: "bot-token",
                 DISCORD_CLIENT_ID: "client-id",
                 DISCORD_CLIENT_SECRET: "client-secret",
                 DISCORD_GUILD_ID: "guild-id",
+                REQUIRED_GUILD_ID: "guild-id",
                 DISCORD_SUPERUSER_ID: "123456789012345678",
             },
             "noona-komf": {
@@ -49,8 +51,11 @@ test("buildSetupProfileSnapshot emits the minimal v3 browser contract", () => {
     assert.equal(snapshot.kavita.mode, "external");
     assert.equal(snapshot.kavita.baseUrl, "https://kavita.example");
     assert.equal(snapshot.kavita.sharedLibraryPath, "/mnt/manga");
+    assert.equal(snapshot.komf.mode, "external");
+    assert.equal(snapshot.komf.baseUrl, "https://komf.example");
     assert.equal(snapshot.komf.applicationYml, "komf:\n  enabled: true");
     assert.equal(snapshot.discord.botToken, "bot-token");
+    assert.equal(snapshot.discord.requiredGuildId, "guild-id");
     assert.equal(snapshot.discord.superuserId, "123456789012345678");
 });
 
@@ -70,13 +75,35 @@ test("deriveSetupProfileValues keeps storageRoot metadata out of per-service env
         kavitaBaseUrl: "https://kavita.example",
         kavitaApiKey: "secret-key",
         kavitaSharedLibraryPath: "/mnt/manga",
-        komfMode: "managed",
+        komfMode: "external",
+        komfBaseUrl: " https://komf.example ",
     });
 
+    assert.equal(derived["noona-portal"].KOMF_BASE_URL, "https://komf.example");
     assert.equal(derived["noona-raven"].KAVITA_BASE_URL, "https://kavita.example");
     assert.equal(derived["noona-raven"].KAVITA_DATA_MOUNT, "/mnt/manga");
     assert.equal(Object.prototype.hasOwnProperty.call(derived["noona-vault"], "NOONA_DATA_ROOT"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(derived["noona-raven"], "NOONA_DATA_ROOT"), false);
+});
+
+test("deriveSetupProfileValues clears Portal Komf URL when Komf is managed", () => {
+    const derived = deriveSetupProfileValues({
+        values: {
+            "noona-portal": {
+                KOMF_BASE_URL: "https://komf.example",
+            },
+            "noona-raven": {},
+            "noona-kavita": {},
+            "noona-komf": {},
+        },
+        serviceNames: ["noona-portal", "noona-raven", "noona-kavita", "noona-komf"],
+        kavitaMode: "managed",
+        kavitaApiKey: "secret-key",
+        komfMode: "managed",
+        komfBaseUrl: "https://komf.example",
+    });
+
+    assert.equal(derived["noona-portal"].KOMF_BASE_URL, "");
 });
 
 test("hydrateSetupProfileState restores wizard fields from a persisted snapshot", () => {
@@ -105,6 +132,7 @@ test("hydrateSetupProfileState restores wizard fields from a persisted snapshot"
                 clientId: "client-id",
                 clientSecret: "client-secret",
                 guildId: "guild-id",
+                requiredGuildId: "guild-id",
                 superuserId: "123456789012345678",
                 joinDefaultRoles: "Members",
                 joinDefaultLibraries: "Manga",
@@ -125,6 +153,7 @@ test("hydrateSetupProfileState restores wizard fields from a persisted snapshot"
     assert.equal(hydrated.kavitaSharedLibraryPath, "/mnt/manga");
     assert.equal(hydrated.komfMode, "managed");
     assert.equal(hydrated.values["noona-portal"].DISCORD_BOT_TOKEN, "bot-token");
+    assert.equal(hydrated.values["noona-portal"].REQUIRED_GUILD_ID, "guild-id");
     assert.equal(hydrated.values["noona-portal"].DISCORD_SUPERUSER_ID, "123456789012345678");
     assert.equal(hydrated.values["noona-portal"].PORTAL_JOIN_DEFAULT_LIBRARIES, "Manga");
     assert.equal(hydrated.values["noona-komf"].KOMF_APPLICATION_YML, "server:\n  port: 8085\n");

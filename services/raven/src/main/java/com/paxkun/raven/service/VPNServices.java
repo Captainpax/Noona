@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/settings/SettingsService.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnLoginTestResult.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnRegionOption.java
- * Times this file has been edited: 10
+ * Times this file has been edited: 11
  */
 package com.paxkun.raven.service;
 
@@ -44,7 +44,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Manages Raven VPN connectivity, disable flow, and scheduled IP rotations.
+ * Manages Raven VPN connectivity, disable flow, and manual rotation.
  * The implementation currently targets PIA OpenVPN profiles.
  */
 @Service
@@ -54,9 +54,6 @@ public class VPNServices {
     private static final String VPN_TAG = "VPN";
     private static final String DEFAULT_PROVIDER = "pia";
     private static final String DEFAULT_REGION = "us_california";
-    private static final int DEFAULT_ROTATE_INTERVAL_MINUTES = 30;
-    private static final int MIN_ROTATE_INTERVAL_MINUTES = 1;
-    private static final int MAX_ROTATE_INTERVAL_MINUTES = 24 * 60;
     private static final Duration PROFILE_REFRESH_TTL = Duration.ofHours(6);
     private static final Pattern REMOTE_PATTERN = Pattern.compile("^\\s*remote\\s+([^\\s]+)\\s+\\d+\\s*$");
     private static final Pattern IP_JSON_PATTERN = Pattern.compile("\"ip\"\\s*:\\s*\"([^\"]+)\"");
@@ -144,12 +141,12 @@ public class VPNServices {
         boolean connected = isVpnConnected();
         return new VpnRuntimeStatus(
                 Boolean.TRUE.equals(settings.getEnabled()),
-                Boolean.TRUE.equals(settings.getAutoRotate()),
+                false,
                 rotationInProgress.get(),
                 connected,
                 Optional.ofNullable(settings.getProvider()).orElse(DEFAULT_PROVIDER),
                 connected ? Optional.ofNullable(currentRegion).filter(region -> !region.isBlank()).orElse(configuredRegion) : configuredRegion,
-                normalizeRotateInterval(settings.getRotateEveryMinutes()),
+                null,
                 currentPublicIp,
                 lastRotationAtIso,
                 nextRotationAtIso,
@@ -238,7 +235,7 @@ public class VPNServices {
                 try {
                     rotateNowInternal(sanitizedTrigger, true);
                 } catch (Exception e) {
-                    logger.error(VPN_TAG, "Background VPN rotation failed: " + e.getMessage());
+                    logger.error(VPN_TAG, "Background VPN rotation failed: " + formatThrowableDetail(e, "Unexpected background VPN rotation error"));
                 }
             });
         } catch (RuntimeException e) {
@@ -257,6 +254,12 @@ public class VPNServices {
                     Instant.now().toString()
             );
         }
+
+        logger.info(
+                VPN_TAG,
+                "Queued VPN rotation | trigger=" + sanitizeForLog(sanitizedTrigger)
+                        + " | region=" + sanitizeForLog(configuredRegion)
+        );
 
         return new VpnRotationResult(
                 true,
@@ -288,6 +291,11 @@ public class VPNServices {
             nextRotationAtMs = 0L;
             nextRotationAtIso = null;
             clearAutoConnectRetrySchedule();
+            logger.info(
+                    VPN_TAG,
+                    "Queued VPN disable until the active rotation finishes | trigger=" + sanitizeForLog(sanitizedTrigger)
+                            + " | region=" + sanitizeForLog(activeRegion)
+            );
             return new VpnRotationResult(
                     true,
                     "VPN disable queued until the active rotation finishes.",
@@ -304,6 +312,11 @@ public class VPNServices {
         disablePendingAfterRotation.set(false);
         if (!isOpenVpnRunning() && "disabled".equalsIgnoreCase(connectionState)) {
             applyDisabledRuntimeState();
+            logger.info(
+                    VPN_TAG,
+                    "VPN already disabled | trigger=" + sanitizeForLog(sanitizedTrigger)
+                            + " | region=" + sanitizeForLog(activeRegion)
+            );
             return new VpnRotationResult(
                     true,
                     "VPN already disabled.",
@@ -318,6 +331,11 @@ public class VPNServices {
         }
 
         applyDisabledRuntimeState();
+        logger.info(
+                VPN_TAG,
+                "VPN disabled | trigger=" + sanitizeForLog(sanitizedTrigger)
+                        + " | region=" + sanitizeForLog(activeRegion)
+        );
         return new VpnRotationResult(
                 true,
                 "VPN disabled.",
@@ -441,13 +459,10 @@ public class VPNServices {
                     Instant.now().toString()
             );
         } catch (Exception e) {
-            String safeMessage = Optional.ofNullable(e.getMessage())
-                    .filter(message -> !message.isBlank())
-                    .map(this::sanitizeForLog)
-                    .orElse("PIA login test failed.");
+            String safeMessage = formatThrowableDetail(e, "PIA login test failed");
             String failureMessage = "Login test failed: " + safeMessage;
             setRuntimeError(failureMessage);
-            logger.warn(VPN_TAG, "⚠️ PIA login test failed | trigger=" + sanitizeForLog(triggeredBy)
+            logger.warn(VPN_TAG, "PIA login test failed | trigger=" + sanitizeForLog(triggeredBy)
                     + " | region=" + sanitizeForLog(region)
                     + " | reason=" + safeMessage);
             result = new VpnLoginTestResult(
@@ -486,7 +501,6 @@ public class VPNServices {
         try {
             DownloadVpnSettings settings = getLiveVpnSettings();
             boolean enabled = Boolean.TRUE.equals(settings.getEnabled());
-            boolean autoRotate = Boolean.TRUE.equals(settings.getAutoRotate());
             long now = System.currentTimeMillis();
 
             if (!enabled) {
@@ -511,44 +525,18 @@ public class VPNServices {
                 VpnRotationResult result = ensureConnectedInternal("schedule-connect");
                 if (!result.ok()) {
                     scheduleNextAutoConnectRetry(now);
-                    logger.warn(VPN_TAG, "⚠️ Raven VPN auto-connect failed: " + sanitizeForLog(result.message()));
                     return;
                 }
 
                 clearAutoConnectRetrySchedule();
-                now = System.currentTimeMillis();
             }
 
-            if (!autoRotate) {
-                nextRotationAtMs = 0L;
-                nextRotationAtIso = null;
-                return;
-            }
-
-            int intervalMinutes = normalizeRotateInterval(settings.getRotateEveryMinutes());
-            if (nextRotationAtMs <= 0) {
-                long nextAt = now + TimeUnit.MINUTES.toMillis(intervalMinutes);
-                nextRotationAtMs = nextAt;
-                nextRotationAtIso = Instant.ofEpochMilli(nextAt).toString();
-                return;
-            }
-
-            nextRotationAtIso = Instant.ofEpochMilli(nextRotationAtMs).toString();
-            if (now < nextRotationAtMs || rotationInProgress.get() || loginTestInProgress.get()) {
-                return;
-            }
-
-            VpnRotationResult result = rotateNowInternal("schedule");
-            if (!result.ok()) {
-                logger.warn(VPN_TAG, "⚠️ Scheduled VPN rotation failed: " + sanitizeForLog(result.message()));
-            }
-
-            long nextAt = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(intervalMinutes);
-            nextRotationAtMs = nextAt;
-            nextRotationAtIso = Instant.ofEpochMilli(nextAt).toString();
+            nextRotationAtMs = 0L;
+            nextRotationAtIso = null;
         } catch (Exception e) {
-            setRuntimeError(e.getMessage());
-            logger.warn(VPN_TAG, "⚠️ VPN scheduler tick failed: " + e.getMessage());
+            String failureMessage = formatThrowableDetail(e, "Unexpected VPN scheduler error");
+            setRuntimeError(failureMessage);
+            logger.warn(VPN_TAG, "VPN scheduler tick failed: " + failureMessage);
         }
     }
 
@@ -573,14 +561,13 @@ public class VPNServices {
         return runVpnTransition(
                 triggeredBy,
                 reservationHeld,
-                true,
                 "VPN rotation complete.",
                 "VPN rotation"
         );
     }
 
     /**
-     * Ensures Raven has an established VPN tunnel without requiring periodic rotation to be enabled.
+     * Ensures Raven has an established VPN tunnel whenever VPN is enabled.
      *
      * @param triggeredBy The source that requested the connection.
      * @return The resulting VPN transition payload.
@@ -588,7 +575,6 @@ public class VPNServices {
     private VpnRotationResult ensureConnectedInternal(String triggeredBy) {
         return runVpnTransition(
                 triggeredBy,
-                false,
                 false,
                 "VPN connection established.",
                 "VPN auto-connect"
@@ -598,17 +584,15 @@ public class VPNServices {
     /**
      * Executes Raven's shared VPN transition flow for both manual rotations and background auto-connect attempts.
      *
-     * @param triggeredBy            The source that requested the transition.
-     * @param reservationHeld        Whether the caller already reserved {@code rotationInProgress}.
-     * @param updateRotationSchedule Whether Raven should schedule the next periodic rotation on success.
-     * @param successMessage         The message returned when the transition succeeds.
-     * @param maintenanceReason      The maintenance-pause label used while downloads drain.
+     * @param triggeredBy       The source that requested the transition.
+     * @param reservationHeld   Whether the caller already reserved {@code rotationInProgress}.
+     * @param successMessage    The message returned when the transition succeeds.
+     * @param maintenanceReason The maintenance-pause label used while downloads drain.
      * @return The resulting VPN transition payload.
      */
     private VpnRotationResult runVpnTransition(
             String triggeredBy,
             boolean reservationHeld,
-            boolean updateRotationSchedule,
             String successMessage,
             String maintenanceReason
     ) {
@@ -654,12 +638,25 @@ public class VPNServices {
 
             String targetRegion = resolveConfiguredRegion(settings);
             activeRegion = targetRegion;
+            logger.info(
+                    VPN_TAG,
+                    maintenanceReason + " started | trigger=" + sanitizeForLog(triggeredBy)
+                            + " | region=" + sanitizeForLog(targetRegion)
+            );
 
             failureStage = "starting maintenance pause";
             downloadService.beginMaintenancePause(maintenanceReason);
             maintenancePauseActive = true;
             failureStage = "pausing active downloads";
             pauseResult = downloadService.requestPauseActiveDownloads();
+            logger.info(
+                    VPN_TAG,
+                    maintenanceReason + " pausing downloads | trigger=" + sanitizeForLog(triggeredBy)
+                            + " | region=" + sanitizeForLog(targetRegion)
+                            + " | affectedTasks=" + pauseResult.getAffectedTasks()
+                            + " | pausedImmediately=" + pauseResult.pausedImmediately().size()
+                            + " | pausingAfterCurrentChapter=" + pauseResult.pausingAfterCurrentChapter().size()
+            );
 
             failureStage = "waiting for downloads to pause";
             boolean drained = downloadService.waitForNoActiveDownloads(Duration.ofMinutes(Math.max(1, pauseTimeoutMinutes)));
@@ -682,7 +679,7 @@ public class VPNServices {
             currentPublicIp = resolvePublicIp();
             connectionState = "connected";
             clearAutoConnectRetrySchedule();
-            logger.info(VPN_TAG, "Re-applied " + preservedLocalRoutes.size() + " local route(s) after VPN connect.");
+            logger.debug(VPN_TAG, "Re-applied " + preservedLocalRoutes.size() + " local route(s) after VPN connect.");
 
             if (shouldApplyDisabledStateAfterCurrentTransition()) {
                 failureStage = "disconnecting OpenVPN after queued disable";
@@ -692,6 +689,14 @@ public class VPNServices {
                 failureStage = "ending maintenance pause";
                 downloadService.endMaintenancePause(maintenanceReason + " complete");
                 maintenancePauseActive = false;
+                logger.info(
+                        VPN_TAG,
+                        "Queued VPN disable applied after " + maintenanceReason
+                                + " | trigger=" + sanitizeForLog(triggeredBy)
+                                + " | region=" + sanitizeForLog(currentRegion)
+                                + " | pausedTasks=" + pauseResult.getAffectedTasks()
+                                + " | resumedTasks=" + resumedTasks
+                );
 
                 return new VpnRotationResult(
                         true,
@@ -714,13 +719,17 @@ public class VPNServices {
             failureStage = "ending maintenance pause";
             downloadService.endMaintenancePause(maintenanceReason + " complete");
             maintenancePauseActive = false;
-
-            if (updateRotationSchedule) {
-                int intervalMinutes = normalizeRotateInterval(settings.getRotateEveryMinutes());
-                long nextAt = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(intervalMinutes);
-                nextRotationAtMs = nextAt;
-                nextRotationAtIso = Instant.ofEpochMilli(nextAt).toString();
-            }
+            nextRotationAtMs = 0L;
+            nextRotationAtIso = null;
+            logger.info(
+                    VPN_TAG,
+                    maintenanceReason + " succeeded | trigger=" + sanitizeForLog(triggeredBy)
+                            + " | region=" + sanitizeForLog(currentRegion)
+                            + " | previousIp=" + sanitizeForLog(Optional.ofNullable(previousIp).orElse("(none)"))
+                            + " | currentIp=" + sanitizeForLog(Optional.ofNullable(currentPublicIp).orElse("(none)"))
+                            + " | pausedTasks=" + pauseResult.getAffectedTasks()
+                            + " | resumedTasks=" + resumedTasks
+            );
 
             return new VpnRotationResult(
                     true,
@@ -735,7 +744,6 @@ public class VPNServices {
             );
         } catch (Exception e) {
             String failureMessage = buildVpnTransitionFailureMessage(maintenanceReason, failureStage, e);
-            logger.warn(VPN_TAG, "⚠️ VPN rotation failed: " + sanitizeForLog(e.getMessage()));
             if (openVpnConnected || !preservedLocalRoutes.isEmpty()) {
                 failureMessage = appendVpnTransitionFailureDetail(
                         failureMessage,
@@ -753,7 +761,6 @@ public class VPNServices {
                             "ending maintenance pause",
                             maintenancePauseError
                     );
-                    logger.warn(VPN_TAG, sanitizeForLog(cleanupMessage));
                     failureMessage = appendVpnTransitionFailureDetail(failureMessage, cleanupMessage);
                 }
                 maintenancePauseActive = false;
@@ -765,13 +772,13 @@ public class VPNServices {
                         "resuming paused downloads",
                         resumeError
                 );
-                logger.warn(VPN_TAG, sanitizeForLog(cleanupMessage));
                 failureMessage = appendVpnTransitionFailureDetail(failureMessage, cleanupMessage);
             }
             setRuntimeError(failureMessage);
             if (shouldApplyDisabledStateAfterCurrentTransition()) {
                 applyDisabledRuntimeState();
             }
+            logger.warn(VPN_TAG, sanitizeForLog(failureMessage));
             return new VpnRotationResult(
                     false,
                     failureMessage,
@@ -804,11 +811,7 @@ public class VPNServices {
         String normalizedStage = Optional.ofNullable(stage)
                 .filter(value -> !value.isBlank())
                 .orElse("an unknown stage");
-        String detail = Optional.ofNullable(error)
-                .map(Throwable::getMessage)
-                .filter(message -> !message.isBlank())
-                .map(this::sanitizeForLog)
-                .orElse("Unexpected VPN transition error.");
+        String detail = formatThrowableDetail(error, "Unexpected VPN transition error");
         return label + " failed while " + normalizedStage + ": " + detail;
     }
 
@@ -823,12 +826,38 @@ public class VPNServices {
         String normalizedStage = Optional.ofNullable(stage)
                 .filter(value -> !value.isBlank())
                 .orElse("performing cleanup");
-        String detail = Optional.ofNullable(error)
-                .map(Throwable::getMessage)
-                .filter(message -> !message.isBlank())
-                .map(this::sanitizeForLog)
-                .orElse("Unexpected VPN cleanup error.");
+        String detail = formatThrowableDetail(error, "Unexpected VPN cleanup error");
         return "Cleanup also failed while " + normalizedStage + ": " + detail;
+    }
+
+    /**
+     * Formats a throwable detail for Raven's user-facing runtime state and
+     * normal-run logs, preserving the exception type when the message is blank.
+     *
+     * @param error    The throwable Raven needs to describe.
+     * @param fallback The fallback phrase without trailing punctuation.
+     * @return The resulting formatted detail.
+     */
+    private String formatThrowableDetail(Throwable error, String fallback) {
+        String safeFallback = Optional.ofNullable(fallback)
+                .filter(value -> !value.isBlank())
+                .orElse("Unexpected error");
+        if (error == null) {
+            return safeFallback + ".";
+        }
+
+        String message = Optional.ofNullable(error.getMessage())
+                .filter(value -> !value.isBlank())
+                .map(this::sanitizeForLog)
+                .orElse("");
+        if (!message.isBlank()) {
+            return message;
+        }
+
+        String type = Optional.ofNullable(error.getClass().getSimpleName())
+                .filter(value -> !value.isBlank())
+                .orElse("UnknownException");
+        return safeFallback + " (" + type + ").";
     }
 
     /**
@@ -1621,7 +1650,7 @@ public class VPNServices {
                 }
             }
         } catch (Exception e) {
-            logger.warn(VPN_TAG, "⚠️ Failed to stop OpenVPN process cleanly: " + e.getMessage());
+            logger.warn(VPN_TAG, "Failed to stop OpenVPN process cleanly: " + e.getMessage());
         } finally {
             connectionState = "disconnected";
         }
@@ -1753,13 +1782,6 @@ public class VPNServices {
     private Path resolveVpnRoot() {
         Path downloadsRoot = Optional.ofNullable(logger.getDownloadsRoot()).orElse(Path.of("/app/downloads"));
         return downloadsRoot.resolve("vpn").resolve("pia");
-    }
-
-    private int normalizeRotateInterval(Integer inputMinutes) {
-        if (inputMinutes == null) {
-            return DEFAULT_ROTATE_INTERVAL_MINUTES;
-        }
-        return Math.max(MIN_ROTATE_INTERVAL_MINUTES, Math.min(MAX_ROTATE_INTERVAL_MINUTES, inputMinutes));
     }
 
     String resolvePublicIp() {

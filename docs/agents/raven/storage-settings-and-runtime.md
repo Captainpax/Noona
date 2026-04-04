@@ -7,6 +7,11 @@
   JNA.
 - Tests run with JUnit. Live scrape tests are excluded unless `RAVEN_LIVE_SCRAPE` or the Gradle `liveScrape` property
   enables them.
+- Raven keeps a balanced log split:
+  `INFO` for lifecycle summaries,
+  `DEBUG` for raw scrape/download/VPN trace detail,
+  and `WARN` or `ERROR` for operator-actionable problems.
+- Keep normal-run logs ASCII-only and prefer concise state summaries over per-image or per-page chatter.
 
 ## Managed Disk Layout
 
@@ -68,13 +73,12 @@
 ## VPN Settings
 
 - VPN settings store:
-  `provider`, `enabled`, `onlyDownloadWhenVpnOn`, `autoRotate`, `rotateEveryMinutes`, `region`, `piaUsername`,
-  `piaPassword`
+  `provider`, `enabled`, `onlyDownloadWhenVpnOn`, `region`, `piaUsername`, `piaPassword`
 - Raven currently only supports the `pia` provider.
 - The VPN root lives under `downloads/vpn/pia`.
 - Raven downloads and refreshes PIA OpenVPN profiles automatically, then uses the `openvpn` binary at runtime.
 - `enabled=true` now means Raven will try to establish a baseline VPN tunnel whenever it is disconnected.
-  `autoRotate` only controls later periodic re-rotation, not the initial connect.
+  Raven no longer stores or schedules periodic auto-rotation.
 - Saving `enabled=false` now asks Raven to apply the disabled runtime state immediately.
   If a rotation is already in flight, Raven queues the disable, finishes the current transition, then disconnects.
 - `enabled` and `onlyDownloadWhenVpnOn` remain separate.
@@ -91,6 +95,8 @@
 - Manual rotate remains an async-accepted action, but Raven validates the enabled PIA settings before returning `ok`.
 - That validation now uses the freshly saved `downloads.vpn` document, so save-then-rotate and save-then-apply flows
   do not depend on the old cache TTL.
+- Fresh Add Downloads queues clear non-active same-title task snapshots first, so a title-wide requeue starts from the
+  source chapter list instead of resuming a stale partial task plan.
 - Login-test is synchronous and returns the completed probe payload.
 - `VpnRuntimeStatus.connected` is only true once Raven reached a completed VPN connection state.
   While OpenVPN is still `connecting`, Raven reports the configured region instead of treating the tunnel as connected.

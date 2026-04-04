@@ -4,7 +4,7 @@
  * - app/createPortalApp.mjs
  * - app/ravenTitleVolumeMap.mjs
  * - tests/portalApp.test.mjs
- * Times this file has been edited: 16
+ * Times this file has been edited: 17
  */
 
 import crypto from 'node:crypto';
@@ -12,6 +12,7 @@ import {errMSG} from '../../../utilities/etc/logger.mjs';
 import {applyRavenTitleVolumeMap} from '../app/ravenTitleVolumeMap.mjs';
 
 const DEFAULT_PROXY_TIMEOUT_MS = 10000;
+const DEFAULT_MANAGED_KOMF_BASE_URL = 'http://noona-komf:8085/';
 const NOONA_KAVITA_LOGIN_TOKEN_TYPE = 'noona-kavita-login';
 const buildError = (status, message, details) => ({status, message, details});
 
@@ -590,23 +591,37 @@ const normalizeMetadataMatch = (match = {}) => {
     };
 };
 
-const normalizeMetadataRouteError = (error, {action, backend = 'komf'} = {}) => {
+/**
+ * Normalizes metadata bridge failures into operator guidance that matches the active Komf target.
+ *
+ * @param {*} error - Upstream error to normalize.
+ * @param {object} [options] - Recovery context.
+ * @returns {{status: number, message: string, details: *}} Normalized error response.
+ */
+const normalizeMetadataRouteError = (error, {action, backend = 'komf', komfBaseUrl} = {}) => {
     const normalized = normalizeError(error);
     if (normalized.status < 500) {
         return normalized;
     }
 
+    const normalizedKomfBaseUrl = normalizeAbsoluteHttpUrl(komfBaseUrl) || DEFAULT_MANAGED_KOMF_BASE_URL;
+    const managedKomf = normalizedKomfBaseUrl === DEFAULT_MANAGED_KOMF_BASE_URL;
+
     if (backend === 'kavita') {
         return buildError(
             normalized.status,
-            `Kavita metadata ${action} failed inside its external metadata service. Check Komf /config/application.yml metadataProviders and restart noona-komf plus noona-kavita.`,
+            managedKomf
+                ? `Kavita metadata ${action} failed inside its external metadata service. Check Komf /config/application.yml metadataProviders and restart noona-komf plus noona-kavita.`
+                : `Kavita metadata ${action} failed inside its external metadata service at ${normalizedKomfBaseUrl}. Check that Komf instance's metadataProviders configuration and restart that external Komf service plus noona-kavita if needed.`,
             null,
         );
     }
 
     return buildError(
         normalized.status,
-        `Komf metadata ${action} failed. Check Komf /config/application.yml metadataProviders and restart noona-komf.`,
+        managedKomf
+            ? `Komf metadata ${action} failed. Check Komf /config/application.yml metadataProviders and restart noona-komf.`
+            : `Komf metadata ${action} failed at ${normalizedKomfBaseUrl}. Check that Komf instance's metadataProviders configuration and restart that external Komf service if needed.`,
         null,
     );
 };
@@ -998,7 +1013,11 @@ export const registerPortalRoutes = ({
                 matches: Array.isArray(matches) ? matches.map((entry) => normalizeMetadataMatch(entry)) : [],
             });
         } catch (error) {
-            const normalized = normalizeMetadataRouteError(error, {action: 'lookup', backend: 'komf'});
+            const normalized = normalizeMetadataRouteError(error, {
+                action: 'lookup',
+                backend: 'komf',
+                komfBaseUrl: config?.komf?.baseUrl,
+            });
             errMSG(`[Portal] Failed to search standalone metadata matches for "${query}": ${normalized.message}`);
             res.status(normalized.status).json({error: normalized.message, details: normalized.details});
         }
@@ -1035,7 +1054,11 @@ export const registerPortalRoutes = ({
                 matches: Array.isArray(matches) ? matches.map((entry) => normalizeMetadataMatch(entry)) : [],
             });
         } catch (error) {
-            const normalized = normalizeMetadataRouteError(error, {action: 'lookup', backend});
+            const normalized = normalizeMetadataRouteError(error, {
+                action: 'lookup',
+                backend,
+                komfBaseUrl: config?.komf?.baseUrl,
+            });
             errMSG(`[Portal] Failed to fetch Kavita metadata matches for series ${parsedSeriesId}: ${normalized.message}`);
             res.status(normalized.status).json({error: normalized.message, details: normalized.details});
         }
@@ -1147,7 +1170,11 @@ export const registerPortalRoutes = ({
                 volumeMap,
             });
         } catch (error) {
-            const normalized = normalizeMetadataRouteError(error, {action: 'apply', backend});
+            const normalized = normalizeMetadataRouteError(error, {
+                action: 'apply',
+                backend,
+                komfBaseUrl: config?.komf?.baseUrl,
+            });
             errMSG(`[Portal] Failed to apply Kavita metadata match for series ${parsedSeriesId}: ${normalized.message}`);
             res.status(normalized.status).json({error: normalized.message, details: normalized.details});
         }

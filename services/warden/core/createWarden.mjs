@@ -276,6 +276,23 @@ function applyEnvOverrides(descriptor, overrides) {
 
 function parseEnvEntries(entries = []) {
     const envMap = {};
+    if (entries && typeof entries === 'object' && !Array.isArray(entries)) {
+        for (const [rawKey, rawValue] of Object.entries(entries)) {
+            const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+            if (!key) {
+                continue;
+            }
+
+            envMap[key] = rawValue == null ? '' : String(rawValue);
+        }
+
+        return envMap;
+    }
+
+    if (!Array.isArray(entries)) {
+        return envMap;
+    }
+
     for (const entry of entries) {
         if (typeof entry !== 'string') {
             continue;

@@ -72,6 +72,11 @@ import {
     shouldDisableVpnControls,
     waitForVpnRuntimeToSettle,
 } from "./vpnSettingsFlow.mjs";
+import {
+    applySelectedDiscordGuild,
+    applySuggestedDiscordValues,
+    getDiscordGuildGateMismatch,
+} from "./discordGuildSelection.mjs";
 import {normalizeSetupStatus} from "./setupStatus.mjs";
 
 type ServiceCatalogEntry = {
@@ -243,8 +248,6 @@ type DownloadVpnSettings = {
     provider?: string | null;
     enabled?: boolean;
     onlyDownloadWhenVpnOn?: boolean;
-    autoRotate?: boolean;
-    rotateEveryMinutes?: number | null;
     region?: string | null;
     piaUsername?: string | null;
     piaPassword?: string | null;
@@ -260,8 +263,6 @@ type DownloadVpnSettings = {
 type VpnDraftSnapshot = {
     enabled: boolean;
     onlyDownloadWhenVpnOn: boolean;
-    autoRotate: boolean;
-    rotateEveryMinutes: number | null;
     region: string;
     piaUsername: string;
     piaPassword: string;
@@ -340,6 +341,19 @@ type DiscordSetupBotUser = {
     tag?: string | null;
 };
 
+type DiscordApplicationCommandSummary = {
+    id?: string | null;
+    name?: string | null;
+    description?: string | null;
+    type?: number | null;
+};
+
+type DiscordCommandInventory = {
+    globalCommands?: DiscordApplicationCommandSummary[] | null;
+    guildCommands?: DiscordApplicationCommandSummary[] | null;
+    duplicateNames?: string[] | null;
+};
+
 type DiscordSetupResponse = {
     application?: DiscordSetupApplication | null;
     botUser?: DiscordSetupBotUser | null;
@@ -351,6 +365,7 @@ type DiscordSetupResponse = {
     } | null;
     roles?: Array<{ id?: string | null; name?: string | null }> | null;
     channels?: Array<{ id?: string | null; name?: string | null }> | null;
+    commands?: DiscordCommandInventory | null;
     error?: string;
 };
 
@@ -646,7 +661,6 @@ const THREAD_RATE_LIMIT_UNLIMITED = "-1";
 const THREAD_RATE_LIMIT_MB_MULTIPLIER = 1024;
 const THREAD_RATE_LIMIT_GB_MULTIPLIER = 1024 * THREAD_RATE_LIMIT_MB_MULTIPLIER;
 const DEFAULT_VPN_REGION = "us_california";
-const DEFAULT_VPN_ROTATE_MINUTES = "30";
 const formatThreadRateLimitDraft = (value: unknown): string => {
     if (typeof value === "string") {
         const raw = value.trim().toLowerCase();
@@ -1051,8 +1065,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const [vpnMessage, setVpnMessage] = useState<string | null>(null);
     const [vpnEnabled, setVpnEnabled] = useState(false);
     const [vpnOnlyDownloadWhenOn, setVpnOnlyDownloadWhenOn] = useState(false);
-    const [vpnAutoRotate, setVpnAutoRotate] = useState(true);
-    const [vpnRotateEveryMinutes, setVpnRotateEveryMinutes] = useState(DEFAULT_VPN_ROTATE_MINUTES);
     const [vpnRegion, setVpnRegion] = useState(DEFAULT_VPN_REGION);
     const [vpnUsername, setVpnUsername] = useState("");
     const [vpnPassword, setVpnPassword] = useState("");
@@ -1257,6 +1269,10 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const portalDiscordFields = portalEnvConfig.filter((entry) => PORTAL_DISCORD_KEYS.has(normalizeString(entry?.key).trim()));
     const portalAccessFields = portalEnvConfig.filter((entry) => PORTAL_COMMAND_ACCESS_KEYS.has(normalizeString(entry?.key).trim()));
     const discordGuildId = normalizeString(portalEditor.envDraft.DISCORD_GUILD_ID).trim();
+    const discordGuildGateMismatch = useMemo(
+        () => getDiscordGuildGateMismatch(portalEditor.envDraft),
+        [portalEditor.envDraft],
+    );
     const discordValidatedGuildName = useMemo(() => {
         const validationGuildName = normalizeString(discordValidation?.guild?.name).trim();
         const validationGuildId = normalizeString(discordValidation?.guild?.id).trim();
@@ -1488,7 +1504,16 @@ export function SettingsPage({selection}: SettingsPageProps) {
         });
     };
     const selectDiscordGuild = (guildId: string) => {
-        updateEnvDraft("noona-portal", "DISCORD_GUILD_ID", guildId);
+        setEditors((prev) => {
+            const current = prev["noona-portal"] ?? defaultEditor();
+            return {
+                ...prev,
+                "noona-portal": {
+                    ...current,
+                    envDraft: applySelectedDiscordGuild(current.envDraft, guildId),
+                },
+            };
+        });
         setDiscordValidation((prev) => prev ? ({
             ...prev,
             suggested: {
@@ -1526,14 +1551,16 @@ export function SettingsPage({selection}: SettingsPageProps) {
             }
 
             setDiscordValidation(payload);
-            const suggestedClientId = normalizeString(payload?.suggested?.clientId).trim();
-            if (suggestedClientId && !clientId) {
-                updateEnvDraft("noona-portal", "DISCORD_CLIENT_ID", suggestedClientId);
-            }
-            const suggestedGuildId = normalizeString(payload?.suggested?.guildId).trim();
-            if (suggestedGuildId && !guildId) {
-                updateEnvDraft("noona-portal", "DISCORD_GUILD_ID", suggestedGuildId);
-            }
+            setEditors((prev) => {
+                const current = prev["noona-portal"] ?? defaultEditor();
+                return {
+                    ...prev,
+                    "noona-portal": {
+                        ...current,
+                        envDraft: applySuggestedDiscordValues(current.envDraft, payload?.suggested ?? {}, {overwrite: false}),
+                    },
+                };
+            });
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
             setDiscordValidation(null);
@@ -2081,8 +2108,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const buildCurrentVpnDraftSnapshot = (): VpnDraftSnapshot => createVpnDraftSnapshot({
         enabled: vpnEnabled,
         onlyDownloadWhenVpnOn: vpnOnlyDownloadWhenOn,
-        autoRotate: vpnAutoRotate,
-        rotateEveryMinutes: vpnRotateEveryMinutes,
         region: vpnRegion,
         piaUsername: vpnUsername,
         piaPassword: vpnPassword,
@@ -2103,8 +2128,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
         const normalizedSnapshot = createVpnDraftSnapshot({
             enabled: json?.enabled === true,
             onlyDownloadWhenVpnOn: json?.onlyDownloadWhenVpnOn === true,
-            autoRotate: json?.autoRotate !== false,
-            rotateEveryMinutes: json?.rotateEveryMinutes,
             region: normalizeString(json?.region).trim() || DEFAULT_VPN_REGION,
             piaUsername: normalizeString(json?.piaUsername).trim(),
             piaPassword: "",
@@ -2114,14 +2137,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
         setVpnMessage((current) => resolveVpnMessageAfterRefresh(current, preserveMessage));
         setVpnEnabled(preservePendingDisableIntent ? false : normalizedSnapshot.enabled);
         setVpnOnlyDownloadWhenOn(normalizedSnapshot.onlyDownloadWhenVpnOn);
-        setVpnAutoRotate(normalizedSnapshot.autoRotate);
-        setVpnRotateEveryMinutes(
-            String(
-                normalizedSnapshot.rotateEveryMinutes != null
-                    ? normalizedSnapshot.rotateEveryMinutes
-                    : Number(DEFAULT_VPN_ROTATE_MINUTES),
-            ),
-        );
         setVpnRegion(normalizedSnapshot.region);
         setVpnUsername(normalizedSnapshot.piaUsername);
         setVpnPassword(normalizedSnapshot.piaPassword);
@@ -2197,10 +2212,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
                     ...vpnPersistedDraft,
                     enabled: currentDraft.enabled,
                 });
-            if (!disableOnlyWhileBusy && (currentDraft.rotateEveryMinutes == null || currentDraft.rotateEveryMinutes < 1)) {
-                setVpnError("Rotation interval must be a positive number of minutes.");
-                return;
-            }
 
             const res = await fetch("/api/noona/settings/downloads/vpn", {
                 method: "PUT",
@@ -4896,8 +4907,8 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             <Column gap="4">
                                 <Heading as="h2" variant="heading-strong-l">PIA VPN</Heading>
                                 <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
-                                    Configure PIA credentials, select a region endpoint, and rotate Raven&apos;s IP on a
-                                    schedule.
+                                    Configure PIA credentials, select a region endpoint, and let Raven auto-connect
+                                    when VPN is enabled. Use Rotate now only when you want an immediate reconnect.
                                 </Text>
                                 {vpnUpdatedAt && (
                                     <Text onBackground="neutral-weak" variant="body-default-xs">
@@ -4975,24 +4986,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             <Text variant="body-default-xs">Only download when VPN is on</Text>
                         </Row>
                         <Row gap="12" style={{flexWrap: "wrap"}}>
-                            <Switch
-                                isChecked={vpnAutoRotate}
-                                disabled={vpnControlsLocked || !vpnEnabled}
-                                ariaLabel="Toggle Raven VPN auto-rotation"
-                                onToggle={() => setVpnAutoRotate((prev) => !prev)}
-                            />
-                            <Text variant="body-default-xs">Auto rotate every 30 minutes (or custom interval)</Text>
-                        </Row>
-                        <Row gap="12" style={{flexWrap: "wrap"}}>
-                            <Input
-                                id="vpnRotateEveryMinutes"
-                                name="vpnRotateEveryMinutes"
-                                label="Rotate every (minutes)"
-                                type="number"
-                                value={vpnRotateEveryMinutes}
-                                disabled={vpnControlsLocked}
-                                onChange={(event) => setVpnRotateEveryMinutes(event.target.value)}
-                            />
                             <Column fillWidth gap="8" style={{minWidth: "18rem"}}>
                                 <Text variant="body-default-s">PIA region</Text>
                                 <select
@@ -5344,6 +5337,18 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             <code> downloadall </code>
                             admin command for one trusted account.
                         </Text>
+                        {discordGuildGateMismatch && (
+                            <Text onBackground="warning-strong" variant="body-default-xs">
+                                Discord guild mismatch: Portal will register commands in
+                                {" "}
+                                <code>{discordGuildGateMismatch.guildId}</code>
+                                {" "}
+                                but enforce
+                                {" "}
+                                <code>{discordGuildGateMismatch.requiredGuildId}</code>
+                                . Keep those aligned unless you intentionally want a separate access gate.
+                            </Text>
+                        )}
                         {renderEditorFeedback(portalEditor)}
                         {discordValidationError && <Text onBackground="danger-strong"
                                                          variant="body-default-xs">{discordValidationError}</Text>}
@@ -5411,6 +5416,73 @@ export function SettingsPage({selection}: SettingsPageProps) {
                                     </Badge>
                                 ))}
                             </Row>
+                        )}
+                        {discordValidation?.commands && (
+                            <Column gap="8">
+                                <Text onBackground="neutral-weak" variant="label-default-s">Slash command
+                                    diagnostics</Text>
+                                <Text onBackground="neutral-weak" variant="body-default-xs">
+                                    Global
+                                    commands: {Array.isArray(discordValidation.commands.globalCommands) ? discordValidation.commands.globalCommands.length : 0}
+                                    {" "}
+                                    | Guild
+                                    commands: {Array.isArray(discordValidation.commands.guildCommands) ? discordValidation.commands.guildCommands.length : 0}
+                                </Text>
+                                <Text
+                                    onBackground={
+                                        Array.isArray(discordValidation.commands.duplicateNames) && discordValidation.commands.duplicateNames.length > 0
+                                            ? "warning-strong"
+                                            : "neutral-weak"
+                                    }
+                                    variant="body-default-xs"
+                                >
+                                    Duplicate names:
+                                    {" "}
+                                    {Array.isArray(discordValidation.commands.duplicateNames) && discordValidation.commands.duplicateNames.length > 0
+                                        ? discordValidation.commands.duplicateNames.join(", ")
+                                        : "none"}
+                                </Text>
+                                {Array.isArray(discordValidation.commands.guildCommands) && discordValidation.commands.guildCommands.length > 0 && (
+                                    <Column gap="4">
+                                        <Text onBackground="neutral-weak" variant="label-default-s">Guild command
+                                            IDs</Text>
+                                        {discordValidation.commands.guildCommands.map((command) => {
+                                            const commandName = normalizeString(command?.name).trim();
+                                            const commandId = normalizeString(command?.id).trim();
+                                            return (
+                                                <Text
+                                                    key={`settings-discord-guild-command-${commandId || commandName || "unknown"}`}
+                                                    onBackground="neutral-weak" variant="body-default-xs">
+                                                    /
+                                                    {commandName || "unknown"}
+                                                    {" "}
+                                                    ({commandId || "no id"})
+                                                </Text>
+                                            );
+                                        })}
+                                    </Column>
+                                )}
+                                {Array.isArray(discordValidation.commands.globalCommands) && discordValidation.commands.globalCommands.length > 0 && (
+                                    <Column gap="4">
+                                        <Text onBackground="neutral-weak" variant="label-default-s">Global command
+                                            IDs</Text>
+                                        {discordValidation.commands.globalCommands.map((command) => {
+                                            const commandName = normalizeString(command?.name).trim();
+                                            const commandId = normalizeString(command?.id).trim();
+                                            return (
+                                                <Text
+                                                    key={`settings-discord-global-command-${commandId || commandName || "unknown"}`}
+                                                    onBackground="neutral-weak" variant="body-default-xs">
+                                                    /
+                                                    {commandName || "unknown"}
+                                                    {" "}
+                                                    ({commandId || "no id"})
+                                                </Text>
+                                            );
+                                        })}
+                                    </Column>
+                                )}
+                            </Column>
                         )}
                     </Column>
                 </Card>

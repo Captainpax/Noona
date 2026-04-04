@@ -96,6 +96,10 @@ the storage path and any secrets, then use the explicit save or install actions 
 Saved setup JSON keeps `storageRoot` as top-level setup metadata.
 Masked secrets are still safe for setup save and download round-trips, but managed Kavita provisioning may ask you to
 re-enter the Kavita admin password before continuing when only the masked placeholder is available.
+If you choose an external Komf instance during setup, Moon saves that URL in the setup profile and Warden derives
+Portal's `KOMF_BASE_URL` from it on save or restore.
+If you leave Komf managed by Noona, Portal keeps its default internal `http://noona-komf:8085` target instead of
+persisting a custom override.
 Moon saves the setup snapshot before direct install so Warden can derive and apply the managed service plan from that
 persisted profile.
 The managed Kavita plus Discord live preflight stays on the setup summary path, where those running services are
@@ -118,6 +122,14 @@ in the normal app instead of treating that as a fresh boot-screen case.
 
 - Moon sign-in is Discord-first.
 - During first-run setup, configure Discord OAuth for Moon and the Portal bot settings you want to use.
+- When you pick or validate a Discord guild in setup or in `Admin -> Integrations -> Discord`, Moon now keeps
+  `DISCORD_GUILD_ID` and Portal's `REQUIRED_GUILD_ID` aligned by default when the gate was blank or already matched the
+  previous guild.
+  If you intentionally keep different values, Moon shows a warning because Portal can register slash commands in one
+  guild while denying them in another.
+- The Discord validation cards in setup and settings now include read-only slash-command diagnostics.
+  Use those details to spot stale or duplicate global vs guild command registrations such as a duplicated
+  `/subscribe` without needing shell access.
 - If you want one trusted Discord account to run Portal's private bulk queue command, set `DISCORD_SUPERUSER_ID` in
   Moon under `Admin -> Integrations -> Discord`.
 - The configured superuser can DM the bot `downloadall type:manga nsfw:false titlegroup:a`.
@@ -241,6 +253,10 @@ The current Moon permission set is:
 Also in Moon:
 
 - `Admin -> Integrations -> Discord` manages Discord bot validation, onboarding defaults, and per-command role gates.
+- That Discord screen also warns when `DISCORD_GUILD_ID` and `REQUIRED_GUILD_ID` diverge, because slash commands can be
+  registered in one guild but blocked by Portal's guild gate in another.
+- Discord validation now reports the detected global commands, guild commands, and duplicate command names to help
+  diagnose `Unknown Integration` or stale registration issues.
 - That same Discord settings screen also carries the optional `DISCORD_SUPERUSER_ID` field for the private DM-only
   `downloadall` command.
 - `Admin -> Integrations -> Kavita` manages Kavita-related defaults and external link settings.
@@ -302,6 +318,8 @@ Downloads, Kavita, or metadata flows fail after a reboot:
 - check service health and logs from Moon or Warden before changing settings by hand
 - if managed Kavita is enabled, expect Portal and Komf to reuse only validated Kavita plugin keys; stale recovered keys
   will now be replaced during setup or restore instead of being silently reused
+- if Portal is configured to use an external Komf URL, metadata bridge errors should reference that external URL instead
+  of telling you to restart `noona-komf`; troubleshoot the external Komf instance directly in that case
 - Raven now keeps fractional chapters such as `101.1` and `101.5` as separate chapters during queueing and sync, so
   seeing those alongside `101` is expected behavior rather than a duplicate-collapse bug
 
@@ -323,14 +341,17 @@ PIA regions stay blank or Raven VPN shows no IP:
   Unsaved region, username, or password edits on the card are part of the rotation request.
 - when `Rotate now` fails after polling settles, Moon now shows Raven's phase-specific final failure text in the card.
   Read that message first because cleanup details may be appended after the original tunnel or route error.
-- when VPN is enabled, Raven now tries to establish the baseline tunnel automatically even if auto-rotate is off, so a
-  queued download that says it is waiting on VPN should normally start on its own once the tunnel comes up
+- when VPN is enabled, Raven now tries to establish the baseline tunnel automatically, so a queued download that says
+  it is waiting on VPN should normally start on its own once the tunnel comes up
 - queued downloads waiting on VPN now react to fresh settings reads immediately.
   If you disable the VPN gate or change VPN settings to remove the wait condition, Raven should stop waiting without
   needing an extra cache-delay retry window.
 - turning VPN off does not automatically clear `Only download when VPN is on`.
   That gate is still a separate setting, so queued downloads only stop waiting when you turn off the gate itself or let
   Raven reconnect successfully.
+- Add Downloads now treats a title-wide queue as a fresh request.
+  If Raven previously had a stale partial task for the same title, it clears that old task state before requeueing the
+  full source chapter list.
 - VPN login tests now return their final result directly, so a success or failure message from Moon is the real probe
   outcome rather than a background-start notice
 - Raven now keeps the last known-good PIA profiles on disk after a bad upstream refresh, so an empty region list plus a

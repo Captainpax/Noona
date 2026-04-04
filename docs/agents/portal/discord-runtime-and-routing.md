@@ -60,6 +60,9 @@
   [../../../services/portal/discord/commandSynchronizer.mjs](../../../services/portal/discord/commandSynchronizer.mjs).
 - On successful login, Portal clears stale global commands first, clears the configured guild commands second, and
   finally registers the current guild command definitions.
+- Registration scope comes from `DISCORD_GUILD_ID`, not from `REQUIRED_GUILD_ID`.
+  If those values differ, command sync can succeed in one guild while the later access check still denies execution
+  there.
 - That "clear then register" sequence is what keeps the old legacy `join` command from reappearing on the application.
 - If no command definitions are available, Portal still clears existing global and guild commands so Discord does not
   keep stale state.
@@ -87,6 +90,10 @@
 - [../../../services/portal/discord/roleManager.mjs](../../../services/portal/discord/roleManager.mjs) centralizes the
   two live Discord access gates.
 - `REQUIRED_GUILD_ID` can lock every slash command to one guild.
+- The exact user-facing denial `"This command can only be used inside the configured Discord server."` only comes from
+  this guild gate.
+  When admins report that message after changing Discord setup, check whether `REQUIRED_GUILD_ID` drifted away from the
+  current `DISCORD_GUILD_ID`.
 - `REQUIRED_ROLE_<COMMAND>` can lock a single command after normalizing its name to uppercase underscore form.
   Example:
   `REQUIRED_ROLE_RECOMMEND`
@@ -94,6 +101,8 @@
   objects are not identical.
 - Denials stay ephemeral and user-facing.
   Portal logs the denied actor plus the reason for command invocations.
+- Moon and Sage now expose read-only slash-command diagnostics and a guild-gate mismatch warning on the admin setup
+  surface, but Portal startup sync remains the only supported cleanup path for stale registrations.
 
 ## Component And DM Routing
 

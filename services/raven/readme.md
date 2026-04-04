@@ -32,7 +32,7 @@ state, and keeps the managed library in sync.
   chapter, otherwise keeping chapter-only names until metadata repair fills the map
 - refreshes cached PIA OpenVPN profiles atomically and keeps the last known-good profiles when an upstream archive
   refresh fails
-- establishes a baseline PIA tunnel automatically whenever VPN is enabled, even if auto-rotate is off
+- establishes a baseline PIA tunnel automatically whenever VPN is enabled
 - accepts manual `Rotate now` requests only after Raven has reserved the rotation and validated the active PIA
   settings, then completes the tunnel change in the background
 - accepts a dedicated disable/apply request that disconnects immediately when Raven is idle and queues that disable
@@ -43,8 +43,10 @@ state, and keeps the managed library in sync.
 - keeps `enabled` separate from `onlyDownloadWhenVpnOn`, so turning VPN off does not silently clear the download gate
 - keeps phase-specific VPN transition failures in the returned/runtime error text and appends cleanup failures instead
   of overwriting the primary cause with a generic rotation error
-- treats auto-rotate as periodic re-rotation only; queued downloads waiting on VPN should start once Raven finishes the
-  baseline connection or reports a concrete VPN error
+- clears stale non-active same-title queue snapshots before a fresh download-all request so Add Downloads can requeue a
+  title from chapter `1` instead of resuming an old partial task
+- collapses duplicate same-title restorable tasks on startup so the newest persisted queue intent wins before worker
+  dispatch resumes anything
 - returns the final `Test login` probe result directly instead of only acknowledging a background job
 - stores its shared settings and task state through Vault's internal service API in managed installs
 

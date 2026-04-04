@@ -21,6 +21,8 @@ Raven-facing browser actions.
 - proxies setup and service-management requests to Warden
 - preserves Warden setup-config validation errors and normalize-only import responses so Moon can show the real issue
 - owns Discord OAuth and Moon auth flows
+- validates Portal Discord bot credentials and returns read-only slash-command diagnostics that Moon can surface during
+  setup and settings troubleshooting
 - brokers browser-facing Raven and settings APIs
 - streams the authenticated background music asset that Moon proxies into its signed-in shell
 - talks to Vault through the stack's trusted internal HTTPS path in managed installs
@@ -45,6 +47,7 @@ Raven-facing browser actions.
 ## When An Admin Needs To Care
 
 - when Moon setup or Discord login fails
+- when Discord bot validation succeeds but Moon reports duplicate slash commands or a likely guild-registration mismatch
 - when user management or default permissions behave unexpectedly
 - when Moon's signed-in background track fails to load or respond to range requests
 - when VPN settings reject a provider other than PIA, a save-triggered VPN apply returns a Raven error, or a VPN login

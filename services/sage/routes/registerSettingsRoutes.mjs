@@ -82,6 +82,7 @@ export function registerSettingsRoutes(context = {}) {
         readDownloadWorkerSettings,
         readDownloadVpnSettings,
         readDebugSetting,
+        readNamingSettings,
         requireAdminSession,
         requireAdminSessionIfSetupCompleted,
         resolveDangerousActionConfirmation,
@@ -100,6 +101,7 @@ export function registerSettingsRoutes(context = {}) {
         writeDiscordOnboardingMessageSetting,
         writeDownloadWorkerSettings,
         writeDownloadVpnSettings,
+        writeNamingSettings,
     } = context
 
     app.use('/api/settings', requireAdminSessionIfSetupCompleted)
@@ -191,43 +193,14 @@ export function registerSettingsRoutes(context = {}) {
     })
 
     app.get('/api/settings/downloads/naming', async (_req, res) => {
-        if (!vaultClient) {
+        if (!vaultClient?.mongo?.findOne) {
             res.status(503).json({error: 'Vault storage is not configured.'})
             return
         }
 
         try {
-            const doc = await vaultClient.mongo.findOne(settingsCollection, {
-                key: DEFAULT_NAMING_SETTINGS.key,
-            })
-
-            res.json({
-                key: DEFAULT_NAMING_SETTINGS.key,
-                titleTemplate:
-                    typeof doc?.titleTemplate === 'string' && doc.titleTemplate.trim()
-                        ? doc.titleTemplate.trim()
-                        : DEFAULT_NAMING_SETTINGS.titleTemplate,
-                chapterTemplate:
-                    typeof doc?.chapterTemplate === 'string' && doc.chapterTemplate.trim()
-                        ? doc.chapterTemplate.trim()
-                        : DEFAULT_NAMING_SETTINGS.chapterTemplate,
-                pageTemplate:
-                    typeof doc?.pageTemplate === 'string' && doc.pageTemplate.trim()
-                        ? doc.pageTemplate.trim()
-                        : DEFAULT_NAMING_SETTINGS.pageTemplate,
-                pagePad:
-                    Number.isFinite(Number(doc?.pagePad)) && Number(doc.pagePad) > 0
-                        ? Math.floor(Number(doc.pagePad))
-                        : DEFAULT_NAMING_SETTINGS.pagePad,
-                chapterPad:
-                    Number.isFinite(Number(doc?.chapterPad)) && Number(doc.chapterPad) > 0
-                        ? Math.floor(Number(doc.chapterPad))
-                        : DEFAULT_NAMING_SETTINGS.chapterPad,
-                volumePad:
-                    Number.isFinite(Number(doc?.volumePad)) && Number(doc.volumePad) > 0
-                        ? Math.floor(Number(doc.volumePad))
-                        : DEFAULT_NAMING_SETTINGS.volumePad,
-            })
+            const settings = await readNamingSettings()
+            res.json(settings)
         } catch (error) {
             logger.error(`[${serviceName}] ⚠️ Failed to load naming settings: ${error.message}`)
             res.status(502).json({error: 'Unable to load naming settings.'})
@@ -235,83 +208,26 @@ export function registerSettingsRoutes(context = {}) {
     })
 
     app.put('/api/settings/downloads/naming', async (req, res) => {
-        if (!vaultClient) {
+        if (!vaultClient?.mongo?.update) {
             res.status(503).json({error: 'Vault storage is not configured.'})
             return
         }
 
         try {
-            const current = await vaultClient.mongo.findOne(settingsCollection, {
-                key: DEFAULT_NAMING_SETTINGS.key,
-            })
-
-            const next = {
-                key: DEFAULT_NAMING_SETTINGS.key,
-                titleTemplate:
-                    typeof req.body?.titleTemplate === 'string'
-                        ? req.body.titleTemplate.trim()
-                        : typeof current?.titleTemplate === 'string'
-                            ? current.titleTemplate.trim()
-                            : DEFAULT_NAMING_SETTINGS.titleTemplate,
-                chapterTemplate:
-                    typeof req.body?.chapterTemplate === 'string'
-                        ? req.body.chapterTemplate.trim()
-                        : typeof current?.chapterTemplate === 'string'
-                            ? current.chapterTemplate.trim()
-                            : DEFAULT_NAMING_SETTINGS.chapterTemplate,
-                pageTemplate:
-                    typeof req.body?.pageTemplate === 'string'
-                        ? req.body.pageTemplate.trim()
-                        : typeof current?.pageTemplate === 'string'
-                            ? current.pageTemplate.trim()
-                            : DEFAULT_NAMING_SETTINGS.pageTemplate,
-                pagePad: Number.isFinite(Number(req.body?.pagePad))
-                    ? Math.max(1, Math.min(12, Math.floor(Number(req.body.pagePad))))
-                    : Number.isFinite(Number(current?.pagePad))
-                        ? Math.max(1, Math.min(12, Math.floor(Number(current.pagePad))))
-                        : DEFAULT_NAMING_SETTINGS.pagePad,
-                chapterPad: Number.isFinite(Number(req.body?.chapterPad))
-                    ? Math.max(1, Math.min(12, Math.floor(Number(req.body.chapterPad))))
-                    : Number.isFinite(Number(current?.chapterPad))
-                        ? Math.max(1, Math.min(12, Math.floor(Number(current.chapterPad))))
-                        : DEFAULT_NAMING_SETTINGS.chapterPad,
-                volumePad: Number.isFinite(Number(req.body?.volumePad))
-                    ? Math.max(1, Math.min(12, Math.floor(Number(req.body.volumePad))))
-                    : Number.isFinite(Number(current?.volumePad))
-                        ? Math.max(1, Math.min(12, Math.floor(Number(current.volumePad))))
-                        : DEFAULT_NAMING_SETTINGS.volumePad,
-            }
-
-            if (!next.titleTemplate) {
-                res.status(400).json({error: 'titleTemplate must not be empty.'})
-                return
-            }
-            if (!next.chapterTemplate) {
-                res.status(400).json({error: 'chapterTemplate must not be empty.'})
-                return
-            }
-            if (!next.pageTemplate) {
-                res.status(400).json({error: 'pageTemplate must not be empty.'})
-                return
-            }
-
-            const now = new Date().toISOString()
-            await vaultClient.mongo.update(
-                settingsCollection,
-                {key: DEFAULT_NAMING_SETTINGS.key},
-                {$set: {...next, updatedAt: now}},
-                {upsert: true},
-            )
-
-            res.json(next)
+            const settings = await writeNamingSettings(req.body ?? {})
+            res.json(settings)
         } catch (error) {
             logger.error(`[${serviceName}] ⚠️ Failed to update naming settings: ${error.message}`)
-            res.status(502).json({error: 'Unable to update naming settings.'})
+            const message = error instanceof Error ? error.message : 'Unable to update naming settings.'
+            const status = message === 'titleTemplate must not be empty.'
+            || message === 'chapterTemplate must not be empty.'
+            || message === 'pageTemplate must not be empty.' ? 400 : 502
+            res.status(status).json({error: message})
         }
     })
 
     app.get('/api/settings/downloads/workers', async (_req, res) => {
-        if (!vaultClient) {
+        if (!vaultClient?.mongo?.findOne) {
             res.status(503).json({error: 'Vault storage is not configured.'})
             return
         }
@@ -331,7 +247,7 @@ export function registerSettingsRoutes(context = {}) {
     })
 
     app.put('/api/settings/downloads/workers', async (req, res) => {
-        if (!vaultClient) {
+        if (!vaultClient?.mongo?.update) {
             res.status(503).json({error: 'Vault storage is not configured.'})
             return
         }
@@ -365,7 +281,7 @@ export function registerSettingsRoutes(context = {}) {
     })
 
     app.get('/api/settings/downloads/vpn', async (_req, res) => {
-        if (!vaultClient) {
+        if (!vaultClient?.mongo?.findOne) {
             res.status(503).json({error: 'Vault storage is not configured.'})
             return
         }
@@ -394,7 +310,7 @@ export function registerSettingsRoutes(context = {}) {
     })
 
     app.put('/api/settings/downloads/vpn', async (req, res) => {
-        if (!vaultClient) {
+        if (!vaultClient?.mongo?.update) {
             res.status(503).json({error: 'Vault storage is not configured.'})
             return
         }
@@ -563,7 +479,7 @@ export function registerSettingsRoutes(context = {}) {
     })
 
     app.post('/api/settings/downloads/vpn/rotate', async (req, res) => {
-        if (!vaultClient) {
+        if (!vaultClient?.mongo?.update) {
             res.status(503).json({error: 'Vault storage is not configured.'})
             return
         }

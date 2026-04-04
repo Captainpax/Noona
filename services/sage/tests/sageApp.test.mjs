@@ -7890,6 +7890,42 @@ test('settings download worker routes reject invalid cpu core assignments', asyn
     assert.equal(payload.error, 'Thread 2 CPU core must be `-1` or a non-negative integer CPU ID.')
 })
 
+test('settings naming route falls back to defaults when Vault read fails', async (t) => {
+    const vault = createVaultAuthStub()
+    const originalFindOne = vault.client.mongo.findOne
+    vault.client.mongo.findOne = async (collectionName, query = {}) => {
+        if (collectionName === 'noona_settings' && query?.key === 'downloads.naming') {
+            throw new Error('naming-read-failed')
+        }
+        return originalFindOne(collectionName, query)
+    }
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const response = await fetch(`${baseUrl}/api/settings/downloads/naming`, {
+        headers: {Authorization: `Bearer ${token}`},
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+        key: 'downloads.naming',
+        titleTemplate: '{title}',
+        chapterTemplate: '{title} c{chapter} (v{volume}) [Noona].cbz',
+        pageTemplate: '{page_padded}{ext}',
+        pagePad: 3,
+        chapterPad: 3,
+        volumePad: 2,
+        updatedAt: null,
+    })
+})
+
 test('settings VPN routes read and update masked PIA credentials', async (t) => {
     const vault = createVaultAuthStub({
         settings: [{
@@ -7897,8 +7933,6 @@ test('settings VPN routes read and update masked PIA credentials', async (t) => 
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'pia-user',
             piaPassword: 'super-secret',
@@ -7946,8 +7980,6 @@ test('settings VPN routes read and update masked PIA credentials', async (t) => 
         body: JSON.stringify({
             enabled: true,
             onlyDownloadWhenVpnOn: false,
-            autoRotate: true,
-            rotateEveryMinutes: 45,
             region: 'us_texas',
             piaUsername: 'new-user',
             piaPassword: 'new-secret',
@@ -7957,7 +7989,6 @@ test('settings VPN routes read and update masked PIA credentials', async (t) => 
     const putPayload = await putRes.json()
     assert.equal(putPayload.enabled, true)
     assert.equal(putPayload.onlyDownloadWhenVpnOn, false)
-    assert.equal(putPayload.rotateEveryMinutes, 45)
     assert.equal(putPayload.region, 'us_texas')
     assert.equal(putPayload.piaUsername, 'new-user')
     assert.equal(putPayload.piaPassword, '********')
@@ -7968,7 +7999,49 @@ test('settings VPN routes read and update masked PIA credentials', async (t) => 
     assert.equal(stored.piaUsername, 'new-user')
     assert.equal(stored.piaPassword, 'new-secret')
     assert.equal(stored.onlyDownloadWhenVpnOn, false)
-    assert.equal(stored.rotateEveryMinutes, 45)
+})
+
+test('settings VPN route falls back to defaults when Vault read fails', async (t) => {
+    const vault = createVaultAuthStub()
+    const originalFindOne = vault.client.mongo.findOne
+    vault.client.mongo.findOne = async (collectionName, query = {}) => {
+        if (collectionName === 'noona_settings' && query?.key === 'downloads.vpn') {
+            throw new Error('vpn-read-failed')
+        }
+        return originalFindOne(collectionName, query)
+    }
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        ravenClient: createRavenStub({
+            async getVpnStatus() {
+                return null
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const response = await fetch(`${baseUrl}/api/settings/downloads/vpn`, {
+        headers: {Authorization: `Bearer ${token}`},
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+        key: 'downloads.vpn',
+        provider: 'pia',
+        enabled: false,
+        onlyDownloadWhenVpnOn: false,
+        region: 'us_california',
+        piaUsername: '',
+        piaPassword: '',
+        passwordConfigured: false,
+        updatedAt: null,
+        status: null,
+    })
 })
 
 test('settings VPN routes reject unsupported providers', async (t) => {
@@ -8012,8 +8085,6 @@ test('settings VPN save route applies connection changes immediately after persi
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8058,8 +8129,6 @@ test('settings VPN save route applies connection changes immediately after persi
         body: JSON.stringify({
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_texas',
             piaUsername: 'updated-user',
             piaPassword: 'updated-secret',
@@ -8091,8 +8160,6 @@ test('settings VPN save route skips reconnect for non-connection changes while R
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8137,8 +8204,6 @@ test('settings VPN save route skips reconnect for non-connection changes while R
         body: JSON.stringify({
             enabled: true,
             onlyDownloadWhenVpnOn: false,
-            autoRotate: false,
-            rotateEveryMinutes: 45,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: '********',
@@ -8151,8 +8216,6 @@ test('settings VPN save route skips reconnect for non-connection changes while R
     const putPayload = await putRes.json()
     assert.equal(putPayload.applyTriggered, false)
     assert.equal(putPayload.onlyDownloadWhenVpnOn, false)
-    assert.equal(putPayload.autoRotate, false)
-    assert.equal(putPayload.rotateEveryMinutes, 45)
     assert.equal(putPayload.piaPassword, '********')
     assert.equal(statusCalls, 1)
     assert.deepEqual(rotateCalls, [])
@@ -8160,8 +8223,6 @@ test('settings VPN save route skips reconnect for non-connection changes while R
     const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.vpn')
     assert.ok(stored)
     assert.equal(stored.onlyDownloadWhenVpnOn, false)
-    assert.equal(stored.autoRotate, false)
-    assert.equal(stored.rotateEveryMinutes, 45)
     assert.equal(stored.piaPassword, 'saved-secret')
 })
 
@@ -8172,8 +8233,6 @@ test('settings VPN save route preserves Raven failure status after settings pers
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8212,8 +8271,6 @@ test('settings VPN save route preserves Raven failure status after settings pers
         body: JSON.stringify({
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_texas',
             piaUsername: 'updated-user',
             piaPassword: 'updated-secret',
@@ -8243,8 +8300,6 @@ test('settings VPN save route queues disable while Raven is still rotating', asy
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8293,8 +8348,6 @@ test('settings VPN save route queues disable while Raven is still rotating', asy
         body: JSON.stringify({
             enabled: false,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: '********',
@@ -8325,8 +8378,6 @@ test('settings VPN save route applies disable immediately while Raven is connect
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8373,8 +8424,6 @@ test('settings VPN save route applies disable immediately while Raven is connect
         body: JSON.stringify({
             enabled: false,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: false,
-            rotateEveryMinutes: 45,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: '********',
@@ -8393,8 +8442,6 @@ test('settings VPN save route applies disable immediately while Raven is connect
     assert.ok(stored)
     assert.equal(stored.enabled, false)
     assert.equal(stored.onlyDownloadWhenVpnOn, true)
-    assert.equal(stored.autoRotate, false)
-    assert.equal(stored.rotateEveryMinutes, 45)
 })
 
 test('settings VPN save route skips disable apply when Raven is already disabled', async (t) => {
@@ -8404,8 +8451,6 @@ test('settings VPN save route skips disable apply when Raven is already disabled
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8454,8 +8499,6 @@ test('settings VPN save route skips disable apply when Raven is already disabled
         body: JSON.stringify({
             enabled: false,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: '********',
@@ -8483,8 +8526,6 @@ test('settings VPN save route preserves Raven disable failure status after setti
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8530,8 +8571,6 @@ test('settings VPN save route preserves Raven disable failure status after setti
         body: JSON.stringify({
             enabled: false,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: '********',
@@ -8559,8 +8598,6 @@ test('settings VPN routes proxy region list and persist rotate drafts before Rav
             provider: 'pia',
             enabled: true,
             onlyDownloadWhenVpnOn: true,
-            autoRotate: true,
-            rotateEveryMinutes: 30,
             region: 'us_california',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -8631,8 +8668,6 @@ test('settings VPN routes proxy region list and persist rotate drafts before Rav
             triggeredBy: 'moon-settings',
             enabled: true,
             onlyDownloadWhenVpnOn: false,
-            autoRotate: true,
-            rotateEveryMinutes: 45,
             region: 'us_texas',
             piaUsername: 'updated-user',
             piaPassword: '********',
@@ -8647,7 +8682,6 @@ test('settings VPN routes proxy region list and persist rotate drafts before Rav
     const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.vpn')
     assert.ok(stored)
     assert.equal(stored.onlyDownloadWhenVpnOn, false)
-    assert.equal(stored.rotateEveryMinutes, 45)
     assert.equal(stored.region, 'us_texas')
     assert.equal(stored.piaUsername, 'updated-user')
     assert.equal(stored.piaPassword, 'saved-secret')
@@ -8723,8 +8757,6 @@ test('settings VPN test-login falls back to persisted credentials when form valu
             key: 'downloads.vpn',
             provider: 'pia',
             enabled: true,
-            autoRotate: true,
-            rotateEveryMinutes: 45,
             region: 'us_texas',
             piaUsername: 'saved-user',
             piaPassword: 'saved-secret',
@@ -9277,3 +9309,4 @@ test('createChannel normalizes channel type when provided as string', async () =
     assert.equal(createCalls[0].type, ChannelType.GuildText)
     assert.equal(channel.type, ChannelType.GuildText)
 })
+

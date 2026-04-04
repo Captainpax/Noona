@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/VaultService.java
  * - src/main/java/com/paxkun/raven/service/DownloadService.java
  * - src/main/java/com/paxkun/raven/service/VPNServices.java
- * Times this file has been edited: 8
+ * Times this file has been edited: 9
  */
 package com.paxkun.raven.service.settings;
 
@@ -265,14 +265,6 @@ public class SettingsService {
 
         if (out.getOnlyDownloadWhenVpnOn() == null) {
             out.setOnlyDownloadWhenVpnOn(false);
-        }
-
-        if (out.getAutoRotate() == null) {
-            out.setAutoRotate(true);
-        }
-
-        if (out.getRotateEveryMinutes() == null || out.getRotateEveryMinutes() < 1) {
-            out.setRotateEveryMinutes(30);
         }
 
         if (out.getRegion() == null || out.getRegion().isBlank()) {

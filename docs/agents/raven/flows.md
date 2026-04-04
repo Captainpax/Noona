@@ -21,6 +21,8 @@
 - The JSON queue route returns structured status values instead of only a message. The controller maps:
   invalid selection to `400`, expired search to `410`, already-active or maintenance-pause states to `409`, and
   accepted queues to `202`.
+- A fresh queue request now clears non-active same-title task snapshots first, so Add Downloads always means
+  "download this title from scratch" rather than "resume whatever stale queued chapter subset Raven still had".
 - Download execution and status persistence live in
   [DownloadService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/DownloadService.java).
 
@@ -29,6 +31,8 @@
 - Raven persists task snapshots in the Vault Mongo collection `raven_download_tasks`.
 - Raven also writes the current task snapshot to Redis key `raven:download:current-task`.
 - On boot, Raven restores queued, downloading, recovering, and interrupted tasks from Vault.
+- When multiple restorable tasks exist for the same title, Raven keeps the newest one and deletes older duplicates
+  before thread/process restore continues.
 - Pause requests are persisted so Raven can cleanly stop after the current chapter and later resume the task.
 - Thread mode and process mode use different executors/supervisors, but both depend on the same persisted
   `DownloadProgress` contract.
@@ -57,10 +61,11 @@
 
 ## VPN Rotation Flow
 
-- `VPNServices` manages PIA region lists, login tests, active OpenVPN state, and scheduled rotation.
-- When VPN is enabled and Raven is disconnected, the scheduler now runs an auto-connect path even if `autoRotate` is
-  false.
-  That establishes the baseline tunnel for VPN-gated downloads without waiting for a manual rotate.
+- `VPNServices` manages PIA region lists, login tests, active OpenVPN state, manual rotation, and scheduler-driven
+  auto-connect retries.
+- When VPN is enabled and Raven is disconnected, the scheduler runs an auto-connect path until the baseline tunnel is
+  back up.
+  There is no periodic auto-rotation schedule anymore.
 - `POST /v1/vpn/rotate` triggers the manual path.
   Raven reserves `rotationInProgress`, validates enabled PIA settings immediately, and only then returns the async
   accepted response.

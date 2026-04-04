@@ -13,10 +13,15 @@
   and `discord`.
 - The `discord` snapshot includes Portal bot settings plus the optional `superuserId` field that maps to
   `DISCORD_SUPERUSER_ID` for Portal's DM-only `downloadall` admin command.
+- The same `discord` snapshot now also carries `requiredGuildId`, which maps to Portal's `REQUIRED_GUILD_ID`.
+  Setup import, save, download, and hydrate paths need to preserve that field alongside `guildId` so Portal's live
+  guild gate does not drift after a setup edit.
 - `deriveSetupProfileSelection()` is the Moon-side summary of implied managed services.
   It always includes `noona-portal` and `noona-raven`, plus `noona-kavita` or `noona-komf` when those integrations
   are managed.
 - `hydrateSetupProfileState()` is the only supported path for restoring wizard form state from a saved snapshot.
+- external Komf URLs stay in `komf.baseUrl` at the public profile layer and only derive Portal's `KOMF_BASE_URL`
+  during local env generation when `komf.mode === "external"`.
 - Moon's `Admin -> Integrations -> Discord` settings surface also exposes `DISCORD_SUPERUSER_ID`, so setup import/export
   and the signed-in settings editor need to stay aligned on that field.
 
@@ -44,6 +49,11 @@
   env maps.
 - Uploaded setup JSON files are normalized server-side and only hydrate local wizard state.
   Persistence still happens on explicit save or install actions.
+- Guild selection logic for Portal Discord config is shared in
+  [../../../services/moon/src/components/noona/discordGuildSelection.mjs](../../../services/moon/src/components/noona/discordGuildSelection.mjs).
+  That helper updates `DISCORD_GUILD_ID` and only auto-updates `REQUIRED_GUILD_ID` when the gate is blank or still
+  matched to the previous selected guild.
+  Custom guild-gate overrides are preserved.
 - Wizard snapshots can carry masked secret placeholders.
   Those placeholders are safe for save and download round-trips, but live setup actions should not treat them as real
   credentials.
@@ -60,6 +70,13 @@
   or signed-in shell state.
 - `manualBootRequired` is Warden's runtime boot-state flag for the current Warden session, not a live readiness verdict
   derived from selected-service health checks.
+- Both the setup wizard and the signed-in Discord settings screen surface a warning whenever `DISCORD_GUILD_ID` and
+  `REQUIRED_GUILD_ID` diverge.
+  That warning is intentional product behavior because Portal can register slash commands in one guild but deny them in
+  another.
+- Discord validation responses now include a read-only `commands` summary with sorted `globalCommands`,
+  `guildCommands`, and `duplicateNames`.
+  Moon should render that data for diagnostics only; command cleanup still belongs to Portal's startup sync.
 
 ## Bootstrap And Login State
 

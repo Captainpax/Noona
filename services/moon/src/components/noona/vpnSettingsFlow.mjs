@@ -9,8 +9,6 @@ export const DEFAULT_VPN_ROTATION_POLL_MS = 1_500
  * @typedef {{
  *   enabled?: boolean | null,
  *   onlyDownloadWhenVpnOn?: boolean | null,
- *   autoRotate?: boolean | null,
- *   rotateEveryMinutes?: number | string | null,
  *   region?: string | null,
  *   piaUsername?: string | null,
  *   piaPassword?: string | null,
@@ -22,8 +20,6 @@ export const DEFAULT_VPN_ROTATION_POLL_MS = 1_500
  * @typedef {{
  *   enabled: boolean,
  *   onlyDownloadWhenVpnOn: boolean,
- *   autoRotate: boolean,
- *   rotateEveryMinutes: number | null,
  *   region: string,
  *   piaUsername: string,
  *   piaPassword: string,
@@ -106,22 +102,14 @@ export const resolveVpnMessageAfterRefresh = (currentMessage, preserveMessage = 
 export const createVpnDraftSnapshot = ({
                                            enabled = false,
                                            onlyDownloadWhenVpnOn = false,
-                                           autoRotate = true,
-                                           rotateEveryMinutes = null,
                                            region = "",
                                            piaUsername = "",
                                            piaPassword = "",
                                            passwordConfigured = false,
                                        } = {}) => {
-    const normalizedRotateEveryMinutes = Number(rotateEveryMinutes)
     return {
         enabled: enabled === true,
         onlyDownloadWhenVpnOn: onlyDownloadWhenVpnOn === true,
-        autoRotate: autoRotate !== false,
-        rotateEveryMinutes:
-            Number.isFinite(normalizedRotateEveryMinutes) && normalizedRotateEveryMinutes > 0
-                ? Math.floor(normalizedRotateEveryMinutes)
-                : null,
         region: normalizeString(region),
         piaUsername: normalizeString(piaUsername),
         piaPassword: typeof piaPassword === "string" ? piaPassword : "",
@@ -138,8 +126,6 @@ export const areVpnDraftsEqual = (left = null, right = null) => {
     const normalizedRight = createVpnDraftSnapshot(right ?? {})
     return normalizedLeft.enabled === normalizedRight.enabled
         && normalizedLeft.onlyDownloadWhenVpnOn === normalizedRight.onlyDownloadWhenVpnOn
-        && normalizedLeft.autoRotate === normalizedRight.autoRotate
-        && normalizedLeft.rotateEveryMinutes === normalizedRight.rotateEveryMinutes
         && normalizedLeft.region === normalizedRight.region
         && normalizedLeft.piaUsername === normalizedRight.piaUsername
         && normalizedLeft.piaPassword === normalizedRight.piaPassword
@@ -162,8 +148,6 @@ export const buildVpnSaveRequestBody = ({
     return {
         enabled: normalizedDraft.enabled,
         onlyDownloadWhenVpnOn: normalizedDraft.onlyDownloadWhenVpnOn,
-        autoRotate: normalizedDraft.autoRotate,
-        rotateEveryMinutes: normalizedDraft.rotateEveryMinutes,
         region: normalizedDraft.region,
         piaUsername: normalizedDraft.piaUsername,
         piaPassword: normalizedDraft.piaPassword,
@@ -199,8 +183,6 @@ export const buildVpnRotateRequestBody = ({
     return {
         enabled: normalizedDraft.enabled,
         onlyDownloadWhenVpnOn: normalizedDraft.onlyDownloadWhenVpnOn,
-        autoRotate: normalizedDraft.autoRotate,
-        rotateEveryMinutes: normalizedDraft.rotateEveryMinutes,
         region: normalizedDraft.region,
         piaUsername: normalizedDraft.piaUsername,
         piaPassword: normalizedDraft.piaPassword,
@@ -219,8 +201,6 @@ export const hasVpnSettingsSnapshot = (value = null) =>
         value.key === "downloads.vpn"
         || typeof value.enabled === "boolean"
         || typeof value.onlyDownloadWhenVpnOn === "boolean"
-        || typeof value.autoRotate === "boolean"
-        || value.rotateEveryMinutes != null
         || typeof value.region === "string"
         || typeof value.piaUsername === "string"
         || typeof value.updatedAt === "string"

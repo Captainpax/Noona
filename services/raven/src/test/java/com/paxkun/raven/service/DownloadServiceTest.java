@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/download/QueueDownloadResult.java
  * - src/main/java/com/paxkun/raven/service/download/SearchTitle.java
  * - src/main/java/com/paxkun/raven/service/download/SourceFinder.java
- * Times this file has been edited: 19
+ * Times this file has been edited: 20
  */
 package com.paxkun.raven.service;
 
@@ -14,6 +14,7 @@ import com.paxkun.raven.service.library.NewChapter;
 import com.paxkun.raven.service.library.NewTitle;
 import com.paxkun.raven.service.settings.DownloadNamingSettings;
 import com.paxkun.raven.service.settings.DownloadVpnSettings;
+import com.paxkun.raven.service.settings.DownloadWorkerSettings;
 import com.paxkun.raven.service.settings.SettingsService;
 import com.paxkun.raven.service.vpn.VpnRuntimeStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,13 +97,16 @@ class DownloadServiceTest {
                 "pia",
                 false,
                 false,
-                true,
-                30,
                 "us_california",
                 "",
                 ""
         );
         lenient().when(settingsService.getDownloadNamingSettings()).thenReturn(naming);
+        lenient().when(settingsService.getDownloadWorkerSettings(anyInt())).thenReturn(new DownloadWorkerSettings(
+                "downloads.workers",
+                List.of(),
+                List.of()
+        ));
         lenient().when(settingsService.getDownloadVpnSettings()).thenReturn(vpnSettings);
         lenient().when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(vpnSettings);
         lenient().when(runtimeProperties.isWorkerMode()).thenReturn(false);
@@ -184,6 +188,148 @@ class DownloadServiceTest {
         // Ensure async downloads complete before @TempDir cleanup runs.
         waitForStatus("Solo Leveling", "completed");
         waitForStatus("Trigun", "completed");
+    }
+
+    @Test
+    void freshQueueClearsStaleSameTitleSnapshotsAndDownloadsAllChapters() throws InterruptedException {
+        Map<String, String> tombRaiderKing = new HashMap<>();
+        tombRaiderKing.put("title", "Tomb Raider King");
+        tombRaiderKing.put("href", "http://example.com/tomb-raider-king");
+
+        when(titleScraper.searchManga("tomb")).thenReturn(new ArrayList<>(List.of(tombRaiderKing)));
+        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
+
+        List<Map<String, String>> chapters = new ArrayList<>();
+        for (int chapterNumber = 1; chapterNumber <= 411; chapterNumber++) {
+            chapters.add(Map.of(
+                    "chapter_title", "Chapter " + chapterNumber,
+                    "href", "http://example.com/tomb-raider-king/" + chapterNumber
+            ));
+        }
+        when(titleScraper.getChapters("http://example.com/tomb-raider-king")).thenReturn(chapters);
+        when(sourceFinder.findSource(anyString())).thenReturn(List.of("http://example.com/page1.jpg"));
+
+        NewTitle resolvedTitle = new NewTitle();
+        resolvedTitle.setTitleName("Tomb Raider King");
+        resolvedTitle.setUuid("trk-uuid");
+        resolvedTitle.setSourceUrl("http://example.com/tomb-raider-king");
+        resolvedTitle.setLastDownloaded("211");
+        when(libraryService.resolveOrCreateTitle("Tomb Raider King", "http://example.com/tomb-raider-king"))
+                .thenReturn(resolvedTitle);
+
+        List<String> staleQueuedChapters = new ArrayList<>();
+        for (int chapterNumber = 212; chapterNumber <= 411; chapterNumber++) {
+            staleQueuedChapters.add(String.valueOf(chapterNumber));
+        }
+        List<Map<String, Object>> persistedDocs = new ArrayList<>(List.of(new HashMap<>(Map.of(
+                "taskId", "trk-stale-task",
+                "title", "Tomb Raider King",
+                "status", "interrupted",
+                "queuedAt", 10L,
+                "lastUpdated", 11L,
+                "sourceUrl", "http://example.com/tomb-raider-king",
+                "queuedChapterNumbers", staleQueuedChapters
+        ))));
+        stubPersistedTaskStore(persistedDocs);
+
+        SearchTitle searchTitle = downloadService.searchTitle("tomb");
+        downloadService.queueDownloadAllChapters(searchTitle.getSearchId(), 1);
+
+        waitForStatus("Tomb Raider King", "completed");
+
+        DownloadProgress completed = downloadService.getDownloadStatuses().stream()
+                .filter(progress -> "Tomb Raider King".equals(progress.getTitle()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(completed.getTotalChapters()).isEqualTo(411);
+        assertThat(completed.getCompletedChapters()).isEqualTo(411);
+        assertThat(completed.getCompletedChapterNumbers()).contains("1", "212", "411");
+        assertThat(persistedDocs)
+                .extracting(doc -> doc.get("taskId"))
+                .doesNotContain("trk-stale-task");
+    }
+
+    @Test
+    void processRestorePrefersNewestRestorableTaskPerTitleBeforeWorkerLaunch() throws Exception {
+        when(runtimeProperties.useProcessWorkers()).thenReturn(true);
+
+        RavenWorkerLauncher workerLauncher = mock(RavenWorkerLauncher.class);
+        Process workerProcess = mock(Process.class);
+        when(workerProcess.pid()).thenReturn(43210L);
+        when(workerLauncher.launch(any())).thenReturn(workerProcess);
+        ReflectionTestUtils.setField(downloadService, "workerLauncher", workerLauncher);
+
+        List<Map<String, Object>> persistedDocs = new ArrayList<>(List.of(
+                new HashMap<>(Map.of(
+                        "taskId", "trk-old-task",
+                        "title", "Tomb Raider King",
+                        "status", "interrupted",
+                        "queuedAt", 100L,
+                        "lastUpdated", 100L,
+                        "sourceUrl", "http://example.com/tomb-raider-king",
+                        "queuedChapterNumbers", List.of("212", "213", "214")
+                )),
+                new HashMap<>(Map.of(
+                        "taskId", "trk-fresh-task",
+                        "title", "Tomb Raider King",
+                        "status", "queued",
+                        "queuedAt", 200L,
+                        "lastUpdated", 200L,
+                        "sourceUrl", "http://example.com/tomb-raider-king",
+                        "queuedChapterNumbers", List.of("1", "2", "3")
+                ))
+        ));
+        stubPersistedTaskStore(persistedDocs);
+
+        downloadService.restorePersistedDownloadsForProcessMode();
+        ReflectionTestUtils.invokeMethod(downloadService, "dispatchQueuedProcessWorkers");
+
+        ArgumentCaptor<RavenWorkerLauncher.WorkerLaunchRequest> requestCaptor =
+                ArgumentCaptor.forClass(RavenWorkerLauncher.WorkerLaunchRequest.class);
+        verify(workerLauncher).launch(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().taskId()).isEqualTo("trk-fresh-task");
+        assertThat(persistedDocs)
+                .extracting(doc -> doc.get("taskId"))
+                .contains("trk-fresh-task")
+                .doesNotContain("trk-old-task");
+    }
+
+    @Test
+    void downloadLogsLifecycleSummariesWithoutPerChapterInfoNoise() throws InterruptedException {
+        Map<String, String> soloLeveling = new HashMap<>();
+        soloLeveling.put("title", "Solo Leveling");
+        soloLeveling.put("href", "http://example.com/solo");
+
+        when(titleScraper.searchManga("solo"))
+                .thenReturn(new ArrayList<>(List.of(soloLeveling)));
+        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
+        when(titleScraper.getChapters("http://example.com/solo"))
+                .thenReturn(List.of(Map.of("chapter_title", "Chapter 1", "href", "http://example.com/solo/1")));
+        when(sourceFinder.findSource(anyString())).thenReturn(List.of("http://example.com/page1.jpg"));
+
+        NewTitle resolvedTitle = new NewTitle();
+        resolvedTitle.setTitleName("Solo Leveling");
+        resolvedTitle.setUuid("solo-uuid");
+        resolvedTitle.setSourceUrl("http://example.com/solo");
+        resolvedTitle.setLastDownloaded("0");
+        when(libraryService.resolveOrCreateTitle("Solo Leveling", "http://example.com/solo"))
+                .thenReturn(resolvedTitle);
+
+        SearchTitle searchTitle = downloadService.searchTitle("solo");
+        downloadService.queueDownloadAllChapters(searchTitle.getSearchId(), 1);
+
+        waitForStatus("Solo Leveling", "completed");
+
+        verify(loggerService).info(eq("DOWNLOAD"), argThat(message ->
+                message.contains("Starting download")
+                        && message.contains("Solo Leveling")
+                        && message.contains("plannedChapters=1")));
+        verify(loggerService).info(eq("DOWNLOAD"), argThat(message ->
+                message.contains("Download completed")
+                        && message.contains("Solo Leveling")));
+        verify(loggerService, never()).info(eq("DOWNLOAD"), contains("Downloading chapter"));
+        verify(loggerService, never()).info(eq("DOWNLOAD"), contains("Saved image"));
+        verify(loggerService, never()).info(eq("DOWNLOAD"), contains("Saved chapter archive"));
     }
 
     /**
@@ -710,6 +856,10 @@ class DownloadServiceTest {
         assertThat(pauseResult.getAffectedTasks()).isEqualTo(1);
 
         waitForStatus("Solo Leveling", "paused");
+        verify(loggerService).info(eq("DOWNLOAD_SERVICE"), contains("Pause requested for 1 download(s)"));
+        verify(loggerService).info(eq("DOWNLOAD"), argThat(message ->
+                message.contains("Paused download")
+                        && message.contains("Solo Leveling")));
 
         DownloadProgress paused = downloadService.getDownloadStatuses().stream()
                 .filter(progress -> "Solo Leveling".equals(progress.getTitle()) && "paused".equals(progress.getStatus()))
@@ -728,8 +878,6 @@ class DownloadServiceTest {
                 "pia",
                 true,
                 true,
-                true,
-                30,
                 "us_california",
                 "pia-user",
                 "pia-secret"
@@ -790,8 +938,6 @@ class DownloadServiceTest {
                 "pia",
                 true,
                 true,
-                true,
-                30,
                 "us_california",
                 "pia-user",
                 "pia-secret"
@@ -801,8 +947,6 @@ class DownloadServiceTest {
                 "pia",
                 true,
                 onlyDownloadWhenVpnOn.get(),
-                true,
-                30,
                 "us_california",
                 "pia-user",
                 "pia-secret"
@@ -858,8 +1002,6 @@ class DownloadServiceTest {
                 "pia",
                 true,
                 true,
-                true,
-                30,
                 "us_california",
                 "pia-user",
                 "pia-secret"
@@ -1116,6 +1258,8 @@ class DownloadServiceTest {
         assertThat(persistedSnapshots)
                 .extracting(snapshot -> snapshot.get("pauseRequested"))
                 .containsOnly(false);
+        verify(loggerService).info(eq("DOWNLOAD"), contains("Resuming download | title=Interrupted Title"));
+        verify(loggerService).info(eq("DOWNLOAD"), contains("Resuming download | title=Paused Title"));
     }
 
     @Test
@@ -1174,6 +1318,132 @@ class DownloadServiceTest {
                     }
                     return progress;
                 });
+    }
+
+    private void stubPersistedTaskStore(List<Map<String, Object>> docs) {
+        lenient().when(vaultService.findMany(eq("raven_download_tasks"), anyMap()))
+                .thenAnswer(invocation -> filterPersistedTaskDocs(docs, invocation.getArgument(1)));
+        lenient().when(vaultService.parseJson(anyMap(), eq(DownloadProgress.class)))
+                .thenAnswer(invocation -> toDownloadProgress(invocation.getArgument(0)));
+        lenient().doAnswer(invocation -> {
+            applyPersistedTaskUpdate(docs, invocation.getArgument(1), invocation.getArgument(2));
+            return null;
+        }).when(vaultService).update(eq("raven_download_tasks"), anyMap(), anyMap(), anyBoolean());
+        lenient().doAnswer(invocation -> {
+            deletePersistedTaskDocs(docs, invocation.getArgument(1));
+            return null;
+        }).when(vaultService).delete(eq("raven_download_tasks"), anyMap());
+    }
+
+    private List<Map<String, Object>> filterPersistedTaskDocs(List<Map<String, Object>> docs, Map<String, Object> query) {
+        if (docs == null || docs.isEmpty()) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> matches = new ArrayList<>();
+        for (Map<String, Object> doc : docs) {
+            if (matchesPersistedTaskQuery(doc, query)) {
+                matches.add(new HashMap<>(doc));
+            }
+        }
+        return matches;
+    }
+
+    private boolean matchesPersistedTaskQuery(Map<String, Object> doc, Map<String, Object> query) {
+        if (query == null || query.isEmpty()) {
+            return true;
+        }
+
+        for (Map.Entry<String, Object> entry : query.entrySet()) {
+            Object expected = entry.getValue();
+            Object actual = doc.get(entry.getKey());
+            if (expected instanceof Map<?, ?> operatorMap) {
+                Object inOperator = operatorMap.get("$in");
+                if (inOperator instanceof Collection<?> values) {
+                    if (!values.contains(actual)) {
+                        return false;
+                    }
+                    continue;
+                }
+            }
+
+            if (!Objects.equals(actual, expected)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void applyPersistedTaskUpdate(
+            List<Map<String, Object>> docs,
+            Map<String, Object> query,
+            Map<String, Object> update
+    ) {
+        if (docs == null || docs.isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> setValues = update != null && update.get("$set") instanceof Map<?, ?>
+                ? (Map<String, Object>) update.get("$set")
+                : Map.of();
+        if (setValues.isEmpty()) {
+            return;
+        }
+
+        for (Map<String, Object> doc : docs) {
+            if (matchesPersistedTaskQuery(doc, query)) {
+                doc.putAll(setValues);
+            }
+        }
+    }
+
+    private void deletePersistedTaskDocs(List<Map<String, Object>> docs, Map<String, Object> query) {
+        if (docs == null || docs.isEmpty()) {
+            return;
+        }
+
+        docs.removeIf(doc -> matchesPersistedTaskQuery(doc, query));
+    }
+
+    private DownloadProgress toDownloadProgress(Map<String, Object> doc) {
+        DownloadProgress progress = new DownloadProgress((String) doc.get("title"));
+        String taskId = (String) doc.get("taskId");
+        progress.ensureTaskId(taskId);
+        progress.attachTaskContext(
+                taskId,
+                (String) doc.getOrDefault("taskType", "library-download"),
+                (String) doc.get("titleUuid"),
+                (String) doc.get("sourceUrl"),
+                (String) doc.get("mediaType"),
+                (String) doc.get("coverUrl"),
+                (String) doc.get("summary")
+        );
+        ReflectionTestUtils.setField(progress, "status", doc.getOrDefault("status", "queued"));
+        ReflectionTestUtils.setField(progress, "queuedAt", ((Number) doc.getOrDefault("queuedAt", 0L)).longValue());
+        ReflectionTestUtils.setField(progress, "lastUpdated", ((Number) doc.getOrDefault("lastUpdated", 0L)).longValue());
+        ReflectionTestUtils.setField(progress, "totalChapters", ((Number) doc.getOrDefault("totalChapters", 0)).intValue());
+        ReflectionTestUtils.setField(progress, "completedChapters", ((Number) doc.getOrDefault("completedChapters", 0)).intValue());
+        ReflectionTestUtils.setField(progress, "pauseRequested", Boolean.TRUE.equals(doc.get("pauseRequested")));
+        ReflectionTestUtils.setField(progress, "message", doc.getOrDefault("message", "Queued in Raven."));
+        ReflectionTestUtils.setField(progress, "queuedChapterNumbers", toStringList(doc.get("queuedChapterNumbers")));
+        ReflectionTestUtils.setField(progress, "completedChapterNumbers", toStringList(doc.get("completedChapterNumbers")));
+        return progress;
+    }
+
+    private List<String> toStringList(Object value) {
+        if (!(value instanceof Collection<?> collection)) {
+            return new ArrayList<>();
+        }
+
+        List<String> normalized = new ArrayList<>();
+        for (Object entry : collection) {
+            if (entry != null) {
+                normalized.add(String.valueOf(entry));
+            }
+        }
+        return normalized;
     }
 
     private void waitForStatus(String titleName, String expectedStatus) throws InterruptedException {

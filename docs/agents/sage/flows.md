@@ -19,6 +19,12 @@
   helpers, managed Kavita service-key provisioning, and Raven mount detection.
 - Setup-config routes preserve Warden's original HTTP status and JSON error payload when Warden responded.
   Moon should only see Sage `502` errors when the Sage-to-Warden proxy itself failed.
+- `POST /api/setup/services/noona-portal/discord/validate` is the shared Discord setup validation route for both setup
+  wizard and signed-in settings.
+  In addition to bot, guild, role, and channel data, it now returns a read-only `commands` inventory with sorted
+  `globalCommands`, `guildCommands`, and `duplicateNames` so Moon can diagnose stale or duplicated slash-command
+  registrations.
+  That route is diagnostic only; it should not mutate Discord command state.
 - Read-only setup calls now tolerate Warden cold starts.
   `listServices`, `getSetupConfig`, `getStorageLayout`, and `getInstallProgress` retry for a bounded window when Warden
   is reachable but still reports `ready: false` or is returning transient upstream bootstrap errors.
@@ -99,8 +105,7 @@
   behind the active rotation when Raven is still busy.
 - Moon's busy-disable save path only sends `enabled=false`, `applyNow=true`, and `triggeredBy`, so Sage does not
   accidentally persist stale region or credential edits that were still on the card while Raven was rotating.
-- Non-connection VPN fields such as `onlyDownloadWhenVpnOn`, `autoRotate`, and `rotateEveryMinutes` do not force a
-  reconnect when Raven is already connected.
+- Non-connection VPN fields such as `onlyDownloadWhenVpnOn` do not force a reconnect when Raven is already connected.
   Disabling VPN also leaves `onlyDownloadWhenVpnOn` alone because the download gate is still a separate setting.
 - VPN test-login preserves the stored password when the caller sends the masked placeholder `********`, then returns
   Raven's final probe result instead of a queued-job acknowledgement.

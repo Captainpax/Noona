@@ -11,6 +11,8 @@
   `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_GUILD_ID`.
 - Portal defaults managed service URLs when not overridden:
   `noona-kavita:5000`, `noona-komf:8085`, `noona-raven:8080`, and `noona-warden:4001`.
+- `KOMF_BASE_URL` is the explicit override for external Komf deployments.
+  If it is blank, Portal should keep using the managed `noona-komf` default.
 - Public/user-facing links should prefer external URLs when configured:
   `KAVITA_EXTERNAL_URL` and `MOON_BASE_URL`.
 
@@ -81,6 +83,11 @@
 - `PORTAL_HTTP_TIMEOUT`
 - `REQUIRED_GUILD_ID`
 - `REQUIRED_ROLE_<COMMAND>`
+
+`DISCORD_GUILD_ID` and `REQUIRED_GUILD_ID` are intentionally separate:
+the first controls where Portal registers guild-scoped slash commands,
+while the second is the runtime access gate checked by `roleManager.mjs`.
+If those values diverge, Discord can still show a command in one guild while Portal denies execution there.
 
 ## Useful Editing Reminders
 

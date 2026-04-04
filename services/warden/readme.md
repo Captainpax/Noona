@@ -19,6 +19,10 @@ exposes the management APIs that the rest of Noona uses.
 - pulls and starts managed Noona containers
 - stores and restores the active setup profile, with `storageRoot` persisted separately from per-service runtime
   overrides
+- derives Portal's optional `KOMF_BASE_URL` override from the saved setup profile only when Komf is configured as
+  external, while managed installs keep Portal on the default internal `noona-komf` service URL
+- persists the browser-facing Discord setup profile, including Portal's `REQUIRED_GUILD_ID`, so setup guild changes can
+  stay aligned with the live Discord access gate unless an admin intentionally overrides it
 - keeps the saved setup profile in `wardenm/noona-settings.json` under `NOONA_DATA_ROOT` and auto-migrates older
   duplicate snapshot files into that canonical location
 - keeps normal post-setup boot in minimal mode so Sage and Moon return first, while full ecosystem startup stays on the
