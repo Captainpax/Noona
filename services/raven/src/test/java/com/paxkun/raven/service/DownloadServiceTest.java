@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/download/QueueDownloadResult.java
  * - src/main/java/com/paxkun/raven/service/download/SearchTitle.java
  * - src/main/java/com/paxkun/raven/service/download/SourceFinder.java
- * Times this file has been edited: 20
+ * Times this file has been edited: 21
  */
 package com.paxkun.raven.service;
 
@@ -132,6 +132,66 @@ class DownloadServiceTest {
         when(vaultService.findMany(eq("raven_download_tasks"), anyMap())).thenReturn(List.of());
 
         assertThat(downloadService.getActiveWorkers()).isEmpty();
+    }
+
+    @Test
+    void requestPauseActiveDownloadsInProcessModeHandlesImmutableEmptyPersistedList() {
+        when(runtimeProperties.useProcessWorkers()).thenReturn(true);
+        when(vaultService.findMany(eq("raven_download_tasks"), anyMap())).thenReturn(List.of());
+
+        DownloadService.PauseRequestResult pauseResult = downloadService.requestPauseActiveDownloads();
+
+        assertThat(pauseResult.getAffectedTasks()).isZero();
+        assertThat(pauseResult.pausedImmediately()).isEmpty();
+        assertThat(pauseResult.pausingAfterCurrentChapter()).isEmpty();
+    }
+
+    @Test
+    void requestPauseActiveDownloadsInProcessModePausesPersistedTasksFromMutableSnapshot() {
+        when(runtimeProperties.useProcessWorkers()).thenReturn(true);
+
+        long now = System.currentTimeMillis();
+        List<Map<String, Object>> persistedDocs = new ArrayList<>(List.of(
+                new HashMap<>(Map.of(
+                        "taskId", "queued-task",
+                        "title", "Queued Title",
+                        "status", "queued",
+                        "queuedAt", now,
+                        "sourceUrl", "http://example.com/queued",
+                        "queuedChapterNumbers", List.of("1", "2")
+                )),
+                new HashMap<>(Map.of(
+                        "taskId", "downloading-task",
+                        "title", "Downloading Title",
+                        "status", "downloading",
+                        "queuedAt", now + 100,
+                        "sourceUrl", "http://example.com/downloading",
+                        "queuedChapterNumbers", List.of("5")
+                ))
+        ));
+        stubPersistedTaskStore(persistedDocs);
+
+        DownloadService.PauseRequestResult pauseResult = downloadService.requestPauseActiveDownloads();
+
+        assertThat(pauseResult.pausedImmediately()).containsExactly("Queued Title");
+        assertThat(pauseResult.pausingAfterCurrentChapter()).containsExactly("Downloading Title");
+
+        Map<String, Object> queuedDoc = persistedDocs.stream()
+                .filter(doc -> "queued-task".equals(doc.get("taskId")))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> downloadingDoc = persistedDocs.stream()
+                .filter(doc -> "downloading-task".equals(doc.get("taskId")))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(queuedDoc.get("status")).isEqualTo("paused");
+        assertThat(queuedDoc.get("pauseRequested")).isEqualTo(true);
+        assertThat(String.valueOf(queuedDoc.get("message"))).contains("Pause requested before download started");
+        assertThat(downloadingDoc.get("status")).isEqualTo("downloading");
+        assertThat(downloadingDoc.get("pauseRequested")).isEqualTo(true);
+        assertThat(downloadingDoc.get("message"))
+                .isEqualTo("Pause requested. Raven will stop this task after the current chapter finishes.");
     }
 
     @Test

@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/service/settings/DownloadNamingSettings.java
  * - src/main/java/com/paxkun/raven/service/settings/DownloadVpnSettings.java
- * Times this file has been edited: 39
+ * Times this file has been edited: 40
  */
 package com.paxkun.raven.service;
 
@@ -805,12 +805,19 @@ public class DownloadService {
         return new PauseRequestResult(pausedImmediately, pausingAfterChapter);
     }
 
+    /**
+     * Requests a maintenance pause while Raven is supervising process workers.
+     * Raven sorts a mutable snapshot of the persisted active task list so an
+     * empty immutable fallback from Vault does not break VPN transitions.
+     *
+     * @return The resulting PauseRequestResult.
+     */
     private PauseRequestResult requestPauseForProcessWorkers() {
         List<String> pausedImmediately = new ArrayList<>();
         List<String> pausingAfterChapter = new ArrayList<>();
 
         synchronized (processWorkerLock) {
-            List<DownloadProgress> activeTasks = loadPersistedTasks(new ArrayList<>(ACTIVE_TASK_STATUSES));
+            List<DownloadProgress> activeTasks = new ArrayList<>(loadPersistedTasks(new ArrayList<>(ACTIVE_TASK_STATUSES)));
             activeTasks.sort(Comparator.comparingLong(DownloadProgress::getQueuedAt));
             for (DownloadProgress progress : activeTasks) {
                 if (progress == null || progress.getTaskId() == null || progress.getTaskId().isBlank()) {

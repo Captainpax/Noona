@@ -67,6 +67,8 @@ recommendations, and the day-to-day admin UI.
   approval or denial changes, with click-through links back into Moon
 - handles Discord-first login and account management
 - surfaces downloads, libraries, subscriptions, and recommendation flows
+- keeps the main Downloads page focused on active Raven work with an auto-playing top carousel, inline progress bars,
+  and hover details, while still using Raven history in the background only to decide when `Resume` should appear
 - treats Raven download queue attempts as successful only when Raven explicitly accepts them, so expired or invalid
   search selections stay visible as real errors
 - keeps the Raven VPN panel locked while Raven reports rotating or connecting, tracks unsaved VPN draft changes against

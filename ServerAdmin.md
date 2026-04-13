@@ -343,6 +343,8 @@ PIA regions stay blank or Raven VPN shows no IP:
   Read that message first because cleanup details may be appended after the original tunnel or route error.
 - when VPN is enabled, Raven now tries to establish the baseline tunnel automatically, so a queued download that says
   it is waiting on VPN should normally start on its own once the tunnel comes up
+- on Linux/process-worker installs, Raven no longer fails rotate or baseline auto-connect just because there were zero
+  active downloads to pause before the VPN transition
 - queued downloads waiting on VPN now react to fresh settings reads immediately.
   If you disable the VPN gate or change VPN settings to remove the wait condition, Raven should stop waiting without
   needing an extra cache-delay retry window.
@@ -362,8 +364,13 @@ PIA regions stay blank or Raven VPN shows no IP:
   a configuration error rather than a Raven runtime problem.
 - `Rotate now` still starts the VPN change in the background, but `Test login` waits for the actual probe result before
   returning.
+- Moon's Downloads page is now active-first.
+  The top carousel and live list both reflect Raven's active queue, and each row's `Details` hover card carries the
+  richer queued/completed previews, timestamps, and VPN-blocked context.
 - if Moon's downloads page shows a queued job waiting on VPN, read the reported connection state and last error there
   first; use `Rotate now` from `Admin -> System -> Downloader` only if Raven is not recovering automatically
+- `Resume` on Moon's Downloads page still depends on Raven history containing paused or interrupted runs, even though
+  that history is no longer rendered on the main page
 - if the error mentions missing `.ovpn` profiles or a failed profile refresh, retry the region reload after upstream
   connectivity is healthy; a later successful refresh or rotation clears the stale profile error automatically
 

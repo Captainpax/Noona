@@ -40,6 +40,8 @@ state, and keeps the managed library in sync.
 - fresh-reads VPN settings for manual rotate validation, scheduler auto-connect, and VPN-gated download waits so a
   newly saved region, credential, or download gate change takes effect immediately instead of waiting for the normal
   settings cache window
+- keeps the process-worker maintenance-pause path tolerant of an empty persisted active-task list, so Linux
+  rotate/auto-connect flows still proceed when there is nothing to pause
 - keeps `enabled` separate from `onlyDownloadWhenVpnOn`, so turning VPN off does not silently clear the download gate
 - keeps phase-specific VPN transition failures in the returned/runtime error text and appends cleanup failures instead
   of overwriting the primary cause with a generic rotation error

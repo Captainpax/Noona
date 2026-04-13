@@ -77,6 +77,8 @@
 - Auto-connect and manual rotation both use the same maintenance-pause flow:
   pause active downloads, wait for in-flight work to drain, reconnect OpenVPN, restore preserved local routes, then
   resume only the titles paused by that VPN transition.
+- In process-worker mode, Raven takes a mutable snapshot of the persisted active-task list before sorting it for the
+  maintenance-pause pass, so an empty immutable Vault fallback does not abort rotate or auto-connect.
 - A queued disable does not clear `onlyDownloadWhenVpnOn`.
   Raven still reads that gate separately when deciding whether queued downloads should wait for a VPN connection.
 - Stage-specific failures are recorded at the point they happen.

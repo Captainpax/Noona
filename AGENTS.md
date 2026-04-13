@@ -38,5 +38,10 @@ Read this before editing Noona.
 - Regenerate API docs with `npm run docs`. This writes `docs/docs.json` from JSDoc output plus Raven Javadocs.
 - Inspect or publish Docker images with `npm run docker:list`, `npm run docker:build`, `npm run docker:push`, and
   `npm run docker:publish`.
+- Target specific Docker images or tags by calling `node scripts/docker-images.mjs` directly with flags like
+  `--services moon,sage`, `--tag <tag>`, `--namespace <registry/project>`, `--no-cache`, `--skip-login`, and
+  `--progress <auto|plain|tty|rawjson>`.
 - Bootstrap Warden locally with [scripts/run-warden.ps1](scripts/run-warden.ps1) on PowerShell
   or [scripts/run-warden.sh](scripts/run-warden.sh) on bash-compatible shells.
+- The Warden bootstrap scripts accept overrides for network, container name, image, debug mode, Docker socket path,
+  port, and `NOONA_DATA_ROOT` through script arguments or environment variables.

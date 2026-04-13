@@ -181,166 +181,78 @@
   opacity: 0.7;
 }
 
-.showcaseCard {
-  background: linear-gradient(
-                  160deg,
-                  color-mix(in srgb, var(--brand-background-strong) 15%, var(--surface-background)) 0%,
-                  color-mix(in srgb, var(--surface-background) 94%, transparent) 48%,
-                  color-mix(in srgb, var(--surface-background) 88%, transparent) 100%
-  );
-}
-
-.taskCarousel {
+.downloadsCarousel {
   width: 100%;
 }
 
-.taskCarouselSlide {
-  width: 100%;
-  padding: clamp(0.5rem, 0.8vw, 0.75rem);
-}
-
-.taskSlideGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(min(100%, 17rem), 0.9fr);
-  gap: 1rem;
-  align-items: stretch;
-}
-
-.taskHeroPanel {
-  min-height: 100%;
-  padding: clamp(1rem, 1.2vw, 1.35rem);
-  border-radius: 1rem;
-  border: 1px solid var(--neutral-border-medium, rgba(255, 255, 255, 0.12));
+.carouselSlideCard,
+.emptyStateCard {
   background: linear-gradient(
-                  145deg,
-                  color-mix(in srgb, var(--brand-background-strong) 10%, var(--surface-background)),
-                  color-mix(in srgb, var(--surface-background) 92%, transparent)
+    160deg,
+    color-mix(in srgb, var(--brand-background-strong) 10%, var(--surface-background)) 0%,
+    color-mix(in srgb, var(--surface-background) 95%, transparent) 52%,
+    color-mix(in srgb, var(--surface-background) 90%, transparent) 100%
   );
 }
 
-.taskInsetStack {
-  display: grid;
-  gap: 1rem;
-}
-
-.taskTimelineGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.65rem;
-  padding: 0.8rem;
-  border-radius: 0.9rem;
-  border: 1px solid var(--neutral-border-medium, rgba(255, 255, 255, 0.12));
-  background: color-mix(in srgb, var(--surface-background) 92%, transparent);
-}
-
-.taskInsetCard,
-.downloadCard {
-  border-color: color-mix(in srgb, var(--brand-background-strong) 10%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
-  background: linear-gradient(
-                  160deg,
-                  color-mix(in srgb, var(--brand-background-strong) 6%, var(--surface-background)) 0%,
-                  color-mix(in srgb, var(--surface-background) 98%, transparent) 100%
-  );
-}
-
-.downloadCard {
-  transition: transform 160ms ease, border-color 160ms ease;
-}
-
-.downloadCard:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--brand-background-strong) 22%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
-}
-
-.progressTrackLarge {
-  height: 0.75rem;
-  overflow: hidden;
-}
-
-.progressTrackSmall {
-  height: 0.5rem;
-  overflow: hidden;
-}
-
-.queueGrid {
-  display: grid;
-  gap: 0.95rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--downloads-queue-min)), 1fr));
-  align-items: stretch;
-}
-
-.queueCard {
+.carouselSlideCard {
   min-height: 100%;
 }
 
-.queueMetaGrid {
+.downloadsList {
   display: grid;
+  gap: 0.9rem;
+}
+
+.listLimitControl {
+  display: inline-flex;
+  align-items: center;
   gap: 0.55rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.queueMetaCell {
-  min-width: 0;
-  padding: 0.6rem 0.7rem;
-  border-radius: 0.8rem;
-  border: 1px solid var(--neutral-border-medium, rgba(255, 255, 255, 0.12));
+  padding: 0.4rem 0.55rem 0.4rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--brand-background-strong) 12%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
+  border-radius: 999px;
   background: color-mix(in srgb, var(--surface-background) 94%, transparent);
 }
 
-.historySheet {
-  display: grid;
-  border-radius: 1rem;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--brand-background-strong) 12%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
+.listLimitLabel {
+  color: var(--neutral-on-background-weak);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.listLimitSelect {
+  min-width: 4.5rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--neutral-on-background-strong);
+  font: inherit;
+  cursor: pointer;
+}
+
+.downloadRow {
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   background: linear-gradient(
-                  160deg,
-                  color-mix(in srgb, var(--brand-background-strong) 7%, var(--surface-background)) 0%,
-                  color-mix(in srgb, var(--surface-background) 98%, transparent) 100%
+    160deg,
+    color-mix(in srgb, var(--brand-background-strong) 6%, var(--surface-background)) 0%,
+    color-mix(in srgb, var(--surface-background) 98%, transparent) 100%
   );
 }
 
-.historyRow {
-  display: grid;
-  grid-template-columns:
-    minmax(11rem, 1.25fr)
-    minmax(6.5rem, 0.72fr)
-    minmax(8.5rem, 0.92fr)
-    minmax(10rem, 1fr)
-    minmax(11rem, 1.2fr)
-    minmax(8rem, 0.9fr)
-    minmax(11rem, 1.15fr);
-  gap: 0.9rem;
-  align-items: start;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--brand-background-strong) 10%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
+.downloadRow:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--brand-background-strong) 24%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
+  box-shadow: 0 1rem 2rem color-mix(in srgb, var(--brand-background-strong) 8%, transparent);
 }
 
-.historyRow:last-child {
-  border-bottom: 0;
+.detailsCard {
+  width: min(24rem, calc(100vw - 2rem));
+  box-shadow: 0 1.2rem 2.4rem color-mix(in srgb, var(--brand-background-strong) 10%, transparent);
 }
 
-.historyHeader {
-  background: color-mix(in srgb, var(--brand-background-strong) 10%, transparent);
-}
-
-.historyHeaderCell {
-  white-space: nowrap;
-}
-
-.historyCell {
-  min-width: 0;
-}
-
-.historyTitleCell {
-  padding-right: 0.35rem;
-}
-
-.historyMobileLabel {
-  display: none;
-}
-
-.historySheet .historyRow:not(.historyHeader):hover {
-  background: color-mix(in srgb, var(--brand-background-strong) 8%, transparent);
+.progressBarLarge,
+.progressBarCompact {
+  gap: 0.5rem;
 }
 
 @media (max-width: 720px) {
@@ -361,58 +273,20 @@
     --downloads-queue-min: 100%;
   }
 
-  .taskCarouselSlide {
-    padding: 0.45rem;
+  .detailsCard {
+    width: min(20rem, calc(100vw - 1.5rem));
   }
 
-  .taskHeroPanel {
-    padding: 1rem;
-  }
-
-  .queueMetaGrid {
-    grid-template-columns: 1fr;
+  .listLimitControl {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 
 @media (max-width: 980px) {
-  .taskSlideGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .taskTimelineGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .historySheet {
-    gap: 0.75rem;
-    border: 0;
-    background: none;
-    overflow: visible;
-  }
-
-  .historyHeader {
-    display: none;
-  }
-
-  .historyRow {
-    grid-template-columns: 1fr;
-    gap: 0.65rem;
-    padding: 0.85rem;
-    border: 1px solid color-mix(in srgb, var(--brand-background-strong) 12%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
-    border-radius: 0.95rem;
-    background: linear-gradient(
-                    160deg,
-                    color-mix(in srgb, var(--brand-background-strong) 7%, var(--surface-background)) 0%,
-                    color-mix(in srgb, var(--surface-background) 98%, transparent) 100%
-    );
-  }
-
-  .historyRow:last-child {
-    border-bottom: 1px solid color-mix(in srgb, var(--brand-background-strong) 12%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
-  }
-
-  .historyMobileLabel {
-    display: block;
+  .downloadRow:hover {
+    transform: none;
+    box-shadow: none;
   }
 }
 

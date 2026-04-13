@@ -107,9 +107,13 @@
 - Downloads are stricter than naive HTTP success checks.
   Moon only treats a queue attempt as accepted when the response is HTTP `202` and Raven returns queue status
   `queued` or `partial`.
-- The downloads page only enables `Resume` when Raven history includes paused or interrupted tasks.
-  Queued VPN-blocked tasks stay in the live queue and surface Raven's connection state, region, and last error instead
-  of implying that a resume action will fix them.
+- The downloads page is active-first.
+  It shows a top carousel for up to ten active Raven tasks plus a simpler live list with per-row progress bars and
+  hover details instead of the older worker and history panels.
+- The downloads page only enables `Resume` when Raven history includes paused or interrupted tasks, even though that
+  history is no longer rendered on the main page.
+- Queued VPN-blocked tasks stay in the live queue and surface Raven's connection state, region, and last error in the
+  inline row copy and hover details instead of implying that a resume action will fix them.
 - Failed Raven queue attempts remain visible in the UI and failed options stay selected in `DownloadsAddPage.tsx`.
 - Recommendation, subscription, and Raven title actions all flow through Moon's server routes into Sage so the browser
   never needs a direct Sage token.
