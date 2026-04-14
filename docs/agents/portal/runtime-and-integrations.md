@@ -31,6 +31,8 @@
     - Reads/writes `portal/<discordId>` secrets.
     - Stores recommendations in `portal_recommendations`.
     - Stores subscriptions in `portal_subscriptions`.
+  - Reads settings documents such as `discord.onboarding_message` and `discord.chapter_notifications` from Vault
+    Mongo.
   - Provides Redis helpers used by the onboarding and Discord DM queue flows.
     - Loads the managed Vault CA before HTTPS requests instead of disabling TLS verification globally.
 - [onboardingStore.mjs](../../../services/portal/storage/onboardingStore.mjs)
@@ -68,6 +70,14 @@
   `presenceUpdater`
   `recommendationNotifier`
   `subscriptionNotifier`
+  `chapterReleaseNotifier`
+- The Discord runtime also listens for guild-member join events.
+  When onboarding settings include both a template and a channel id, Portal renders and posts the saved welcome
+  message into that channel.
+- The chapter-release notifier reads `discord.chapter_notifications`.
+  When `enabled` is true and a channel id is present, it polls Raven every 15 minutes, baselines the current Raven
+  chapter history the first time it is enabled, and then posts future grouped title updates with summaries and Kavita
+  links only for chapter keys it has not already recorded.
 - If Discord login fails, Portal logs that Discord was disabled due to auth failure, skips those Discord-only workers,
   and still starts the HTTP server in API-only mode.
 - `/health` stays `ok` in that degraded startup path and reports Discord as `degraded`.

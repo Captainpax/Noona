@@ -631,7 +631,7 @@ export function registerServiceManagementApi(context = {}) {
             detail: configuredServices.join(', '),
         });
 
-        if (!account && !allowRegister) {
+        if (!account && !allowRegister && candidateApiKeys.length === 0) {
             const message =
                 'Managed Kavita API key provisioning skipped because KAVITA_ADMIN_USERNAME, KAVITA_ADMIN_EMAIL, and KAVITA_ADMIN_PASSWORD are not configured.';
             appendHistoryEntry(MANAGED_KAVITA_SERVICE_NAME, {

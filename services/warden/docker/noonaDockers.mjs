@@ -3,6 +3,7 @@
 import {resolveHostServiceBase, resolveSharedHostEnvEntries} from './hostServiceUrl.mjs';
 import {resolveNoonaImage} from './imageRegistry.mjs';
 import {resolveManagedMongoRootPassword, resolveManagedMongoRootUsername,} from './mongoCredentials.mjs';
+import {WARDEN_API_CLIENT_NAME_SET, WARDEN_API_CLIENT_NAMES} from './wardenApiClientNames.mjs';
 import {buildVaultTokenRegistry, stringifyTokenMap} from './vaultTokens.mjs';
 import {VAULT_TLS_CONTAINER_PATH} from './vaultTls.mjs';
 import {buildWardenApiTokenRegistry} from './wardenApiTokens.mjs';
@@ -117,10 +118,6 @@ const VAULT_AUTH_SERVICE_NAMES = [
     'noona-raven',
     'noona-portal',
 ];
-const WARDEN_API_CLIENT_NAMES = [
-    'noona-sage',
-    'noona-portal',
-];
 
 const SERVICE_DESCRIPTIONS = Object.freeze({
     'noona-moon': 'Moon is the Noona web UI (front-end).',
@@ -199,6 +196,37 @@ const serviceDefs = rawList.map(name => {
                 serverManaged: true,
             }),
         );
+    }
+
+    if (
+        WARDEN_API_CLIENT_NAME_SET.has(name)
+        && name !== 'noona-sage'
+        && name !== 'noona-portal'
+        && name !== 'noona-vault'
+    ) {
+        env.push(`WARDEN_BASE_URL=${DOCKER_WARDEN_URL}`);
+        envConfig.push(
+            createEnvField('WARDEN_BASE_URL', DOCKER_WARDEN_URL, {
+                label: 'Warden Base URL',
+                description: 'Trusted internal URL this service uses to restore its own runtime config from Warden during startup.',
+                warning: 'Change this only if Warden is reachable from the container at a different internal address.',
+                required: false,
+            }),
+        );
+
+        if (wardenApiToken) {
+            env.push(`WARDEN_API_TOKEN=${wardenApiToken}`);
+            envConfig.push(
+                createEnvField('WARDEN_API_TOKEN', wardenApiToken, {
+                    label: 'Warden API Token',
+                    readOnly: true,
+                    description: 'Auto-generated token this service uses to read back its own runtime config from Warden.',
+                    sensitive: true,
+                    serverManaged: true,
+                    required: false,
+                }),
+            );
+        }
     }
 
     if (name === 'noona-sage') {
@@ -554,7 +582,7 @@ const serviceDefs = rawList.map(name => {
                 createEnvField('WARDEN_API_TOKEN', wardenApiToken, {
                     label: 'Warden API Token',
                     readOnly: true,
-                    description: 'Auto-generated token Portal uses for Warden activity polling.',
+                    description: 'Auto-generated token Portal uses for Warden activity polling and self-config restore.',
                     sensitive: true,
                     serverManaged: true,
                     required: false,
@@ -655,6 +683,30 @@ const serviceDefs = rawList.map(name => {
                 serverManaged: true,
             }),
         );
+
+        env.push(`WARDEN_BASE_URL=${DOCKER_WARDEN_URL}`);
+        envConfig.push(
+            createEnvField('WARDEN_BASE_URL', DOCKER_WARDEN_URL, {
+                label: 'Warden Base URL',
+                description: 'Trusted internal URL Vault uses to restore its own runtime config during startup.',
+                warning: 'Change this only if Warden is reachable from Vault at a different internal address.',
+                required: false,
+            }),
+        );
+
+        if (wardenApiToken) {
+            env.push(`WARDEN_API_TOKEN=${wardenApiToken}`);
+            envConfig.push(
+                createEnvField('WARDEN_API_TOKEN', wardenApiToken, {
+                    label: 'Warden API Token',
+                    readOnly: true,
+                    description: 'Auto-generated token Vault uses to read back its own runtime config from Warden.',
+                    sensitive: true,
+                    serverManaged: true,
+                    required: false,
+                }),
+            );
+        }
     }
 
     const hostServiceUrl = portMap[name]

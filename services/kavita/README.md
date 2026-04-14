@@ -17,6 +17,7 @@ This repository includes a Noona-managed Kavita checkout. In Noona, Kavita is th
 
 - provides the managed reading server in a standard Noona install
 - supports the Noona-to-Kavita login handoff
+- keeps Moon `/login` as the managed Noona sign-in entrypoint instead of exposing Kavita's direct first-admin register page
 - exposes the reader and user-role features admins expect from Kavita
 
 ## Who It Is For
@@ -29,10 +30,11 @@ This repository includes a Noona-managed Kavita checkout. In Noona, Kavita is th
 - when reader access or Kavita links fail
 - when tuning managed Kavita defaults during setup
 - when troubleshooting the Noona login handoff
+- when Kavita stays on the managed setup wait message instead of opening the normal login screen
 
 ## How It Fits Into Noona
 
-Warden manages the container, Moon exposes the relevant settings, and Portal/Sage participate in the login and onboarding flow. Admins usually do not install Kavita separately when running Noona.
+Warden manages the container, Moon exposes the relevant settings, and Portal/Sage participate in the login and onboarding flow. Admins usually do not install Kavita separately when running Noona. In managed installs, direct Kavita first-admin registration is blocked so the initial admin always comes from the configured Noona bootstrap account.
 
 ## Next Steps
 

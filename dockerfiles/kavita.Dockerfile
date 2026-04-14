@@ -55,15 +55,16 @@ FROM ubuntu:noble
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-  && apt-get install -y libicu-dev libgdiplus curl tzdata \
+  && apt-get install -y libicu-dev libgdiplus curl tzdata python3 \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=publisher /out /kavita
 COPY services/kavita/API/config/appsettings.json /tmp/config/appsettings.json
 COPY services/kavita/entrypoint.sh /entrypoint.sh
 COPY services/kavita/noona-bootstrap-admin.sh /noona-bootstrap-admin.sh
+COPY utilities/etc/warden_runtime_bootstrap.py /warden_runtime_bootstrap.py
 
-RUN chmod +x /entrypoint.sh /noona-bootstrap-admin.sh
+RUN chmod +x /entrypoint.sh /noona-bootstrap-admin.sh /warden_runtime_bootstrap.py
 
 EXPOSE 5000
 

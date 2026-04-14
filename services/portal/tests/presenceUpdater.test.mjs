@@ -2,7 +2,7 @@
  * @fileoverview Covers Discord presence snapshots and polling updates.
  * Related files:
  * - discord/presenceUpdater.mjs
- * Times this file has been edited: 3
+ * Times this file has been edited: 4
  */
 
 import assert from 'node:assert/strict';
@@ -22,7 +22,7 @@ test('resolveDiscordPresenceSnapshot prioritizes active Warden service updates',
         },
     });
 
-    assert.equal(snapshot.name, 'Updating Moon');
+    assert.equal(snapshot.name, 'Updating Noona');
     assert.equal(snapshot.status, 'dnd');
 });
 

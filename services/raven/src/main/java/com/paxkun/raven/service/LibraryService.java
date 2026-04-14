@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/library/NewChapter.java
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/controller/DownloadController.java
- * Times this file has been edited: 18
+ * Times this file has been edited: 19
  */
 package com.paxkun.raven.service;
 
@@ -26,6 +26,8 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -52,6 +54,8 @@ public class LibraryService {
     private static final String COLLECTION = "manga_library";
     private static final DateTimeFormatter ISO_FORMATTER = DateTimeFormatter.ISO_INSTANT;
     private volatile CheckActivity currentCheckActivity;
+    private final AtomicBoolean libraryCheckQueuedOrRunning = new AtomicBoolean(false);
+    private final AtomicInteger pendingLibraryCheckTasks = new AtomicInteger(0);
 
     /**
      * Handles add or update title.
@@ -228,7 +232,7 @@ public class LibraryService {
         Map<String, Object> doc = vaultService.findOne(COLLECTION, query);
         if (doc == null) return null;
 
-        return vaultService.parseJson(doc, NewTitle.class);
+        return reconcileTitleDownloadState(vaultService.parseJson(doc, NewTitle.class));
     }
 
     /**
@@ -265,16 +269,42 @@ public class LibraryService {
     }
 
     /**
-     * Deletes title.
+     * Deletes a title and its managed download folder before archiving the title record.
      *
      * @param uuid The Raven title UUID.
      * @return True when the condition is satisfied.
     */
-
     public boolean deleteTitle(String uuid) {
         NewTitle existing = getTitleByUuid(uuid);
         if (existing == null) {
             return false;
+        }
+
+        String downloadPath = resolveTitleFolderPath(existing);
+        if (downloadPath != null && !downloadPath.isBlank()) {
+            Path titleFolder = Path.of(downloadPath).normalize();
+            if (Files.exists(titleFolder)) {
+                if (!Files.isDirectory(titleFolder)) {
+                    throw new IllegalStateException("Raven refused to delete a non-directory title path: " + titleFolder);
+                }
+
+                Path downloadedRoot = resolveDownloadedRoot();
+                if (downloadedRoot == null) {
+                    throw new IllegalStateException("Raven downloads root is unavailable, so the title folder could not be deleted safely.");
+                }
+
+                Path normalizedDownloadedRoot = downloadedRoot.normalize();
+                if (titleFolder.equals(normalizedDownloadedRoot) || !titleFolder.startsWith(normalizedDownloadedRoot)) {
+                    throw new IllegalStateException("Raven refused to delete an unmanaged title path: " + titleFolder);
+                }
+
+                try {
+                    deleteTitleFolder(titleFolder);
+                    pruneEmptyManagedParents(titleFolder.getParent(), normalizedDownloadedRoot);
+                } catch (Exception e) {
+                    throw new IllegalStateException("Failed to delete Raven title folder for [" + existing.getTitleName() + "]: " + e.getMessage(), e);
+                }
+            }
         }
 
         Map<String, Object> query = Map.of("uuid", uuid);
@@ -285,8 +315,58 @@ public class LibraryService {
         );
 
         vaultService.update(COLLECTION, query, update, false);
-        logger.warn("LIBRARY", "Archived title [" + existing.getTitleName() + "] (" + uuid + ")");
+        logger.warn("LIBRARY", "Archived title [" + existing.getTitleName() + "] (" + uuid + ") and removed its managed download folder.");
         return true;
+    }
+
+    /**
+     * Deletes a managed Raven title folder recursively.
+     *
+     * @param titleFolder The managed title folder Raven should remove.
+     * @throws Exception When the folder cannot be deleted completely.
+     */
+    protected void deleteTitleFolder(Path titleFolder) throws Exception {
+        try (Stream<Path> stream = Files.walk(titleFolder)) {
+            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    /**
+     * Removes empty managed parent folders after Raven deletes a title folder.
+     *
+     * @param folder         The first parent Raven should inspect.
+     * @param downloadedRoot The managed downloaded root boundary.
+     */
+    protected void pruneEmptyManagedParents(Path folder, Path downloadedRoot) {
+        if (folder == null || downloadedRoot == null) {
+            return;
+        }
+
+        Path normalizedRoot = downloadedRoot.normalize();
+        Path current = folder.normalize();
+        while (current.startsWith(normalizedRoot) && !current.equals(normalizedRoot)) {
+            try (Stream<Path> stream = Files.list(current)) {
+                if (stream.findAny().isPresent()) {
+                    break;
+                }
+            } catch (Exception ignored) {
+                break;
+            }
+
+            try {
+                Files.deleteIfExists(current);
+            } catch (Exception e) {
+                logger.warn("LIBRARY", "Failed to prune empty title parent [" + current + "]: " + e.getMessage());
+                break;
+            }
+
+            current = current.getParent();
+            if (current == null) {
+                break;
+            }
+        }
     }
 
     /**
@@ -1379,6 +1459,41 @@ public class LibraryService {
         return target;
     }
 
+    private NewTitle reconcileTitleDownloadState(NewTitle title) {
+        if (title == null) {
+            return null;
+        }
+
+        String downloadPath = title.getDownloadPath();
+        if (downloadPath == null || downloadPath.isBlank()) {
+            downloadPath = resolveDownloadPath(title.getTitleName(), title.getType());
+        }
+
+        LinkedHashMap<String, String> downloadedChapterFiles;
+        if (downloadPath != null && !downloadPath.isBlank()) {
+            Path titleFolder = Path.of(downloadPath);
+            title.setDownloadPath(downloadPath);
+            if (title.getType() == null || title.getType().isBlank()) {
+                title.setType(inferMediaTypeFromTitleFolder(titleFolder));
+            }
+            downloadedChapterFiles = resolveDownloadedChapterFileIndex(title, titleFolder, title.getTitleName());
+        } else {
+            downloadedChapterFiles = normalizeDownloadedChapterFileMap(title.getDownloadedChapterFiles());
+        }
+
+        List<String> downloadedChapterNumbers = mergeDownloadedChapterNumbers(
+                title.getDownloadedChapterNumbers(),
+                downloadedChapterFiles.keySet()
+        );
+
+        title.setDownloadedChapterFiles(downloadedChapterFiles);
+        title.setDownloadedChapterNumbers(downloadedChapterNumbers);
+        title.setChapterVolumeMap(normalizeChapterVolumeMap(title.getChapterVolumeMap()));
+        title.setChaptersDownloaded(downloadedChapterNumbers.size());
+        title.setLastDownloaded(resolveLatestDownloadedChapter(downloadedChapterNumbers, title.getLastDownloaded()));
+        return title;
+    }
+
     private String buildTitleSyncMessage(int totalQueued, int newQueued, int missingQueued) {
         if (totalQueued <= 0) {
             return "No new or missing chapters found.";
@@ -1444,153 +1559,255 @@ public class LibraryService {
         );
     }
 
-    private TitleSyncResult syncTitleChapters(NewTitle title) {
+    private TitleSyncResult buildTitleSyncResult(
+            NewTitle title,
+            String status,
+            String latestChapter,
+            String previousLastDownloaded,
+            String currentLastDownloaded,
+            int sourceChapterCount,
+            int totalQueued,
+            int newChaptersQueued,
+            int missingChaptersQueued,
+            List<String> queuedChapters,
+            List<String> newChapterNumbers,
+            List<String> missingChapterNumbers,
+            String message
+    ) {
+        return new TitleSyncResult(
+                title != null ? title.getUuid() : null,
+                title != null && title.getTitleName() != null ? title.getTitleName() : "Untitled",
+                status,
+                latestChapter,
+                previousLastDownloaded,
+                currentLastDownloaded,
+                Math.max(0, sourceChapterCount),
+                Math.max(0, totalQueued),
+                Math.max(0, newChaptersQueued),
+                Math.max(0, missingChaptersQueued),
+                queuedChapters == null ? List.of() : List.copyOf(queuedChapters),
+                newChapterNumbers == null ? List.of() : List.copyOf(newChapterNumbers),
+                missingChapterNumbers == null ? List.of() : List.copyOf(missingChapterNumbers),
+                title != null && title.getDownloadedChapterNumbers() != null
+                        ? List.copyOf(title.getDownloadedChapterNumbers())
+                        : List.of(),
+                message
+        );
+    }
+
+    private PlannedTitleSync planTitleSync(NewTitle title) {
         if (title == null) {
-            return new TitleSyncResult(
-                    null,
-                    "Untitled",
-                    "error",
+            return new PlannedTitleSync(
                     null,
                     null,
-                    null,
-                    0,
-                    0,
-                    0,
-                    0,
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    "Unable to sync an empty title."
+                    buildTitleSyncResult(
+                            null,
+                            "error",
+                            null,
+                            null,
+                            null,
+                            0,
+                            0,
+                            0,
+                            0,
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            "Unable to sync an empty title."
+                    )
             );
         }
 
-        String uuid = title.getUuid();
-        String titleName = Optional.ofNullable(title.getTitleName()).orElse("Untitled");
-        String sourceUrl = Optional.ofNullable(title.getSourceUrl()).map(String::trim).orElse("");
-        String currentLastDownloaded = normalizeChapterNumber(Optional.ofNullable(title.getLastDownloaded()).orElse("0"));
+        NewTitle reconciledTitle = reconcileTitleDownloadState(title);
+        String titleName = Optional.ofNullable(reconciledTitle.getTitleName()).orElse("Untitled");
+        String sourceUrl = Optional.ofNullable(reconciledTitle.getSourceUrl()).map(String::trim).orElse("");
+        String currentLastDownloaded = normalizeChapterNumber(Optional.ofNullable(reconciledTitle.getLastDownloaded()).orElse("0"));
         if (currentLastDownloaded == null || currentLastDownloaded.isBlank()) {
             currentLastDownloaded = "0";
         }
 
         if (sourceUrl.isBlank()) {
-            return new TitleSyncResult(
-                    uuid,
-                    titleName,
-                    "skipped",
-                    currentLastDownloaded,
-                    currentLastDownloaded,
-                    currentLastDownloaded,
-                    0,
-                    0,
-                    0,
-                    0,
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()),
-                    "Title has no source URL configured."
+            return new PlannedTitleSync(
+                    reconciledTitle,
+                    null,
+                    buildTitleSyncResult(
+                            reconciledTitle,
+                            "skipped",
+                            currentLastDownloaded,
+                            currentLastDownloaded,
+                            currentLastDownloaded,
+                            0,
+                            0,
+                            0,
+                            0,
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            "Title has no source URL configured."
+                    )
             );
         }
 
         if (downloadService.isTaskActive(titleName)) {
-            return new TitleSyncResult(
-                    uuid,
-                    titleName,
-                    "skipped",
-                    currentLastDownloaded,
-                    currentLastDownloaded,
-                    currentLastDownloaded,
-                    0,
-                    0,
-                    0,
-                    0,
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()),
-                    "This title already has an active Raven task."
+            return new PlannedTitleSync(
+                    reconciledTitle,
+                    null,
+                    buildTitleSyncResult(
+                            reconciledTitle,
+                            "skipped",
+                            currentLastDownloaded,
+                            currentLastDownloaded,
+                            currentLastDownloaded,
+                            Optional.ofNullable(reconciledTitle.getChapterCount()).orElse(0),
+                            0,
+                            0,
+                            0,
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            "This title already has an active Raven task."
+                    )
             );
         }
 
         try {
             List<Map<String, String>> chapters = downloadService.fetchChapters(sourceUrl);
             if (chapters == null || chapters.isEmpty()) {
-                return new TitleSyncResult(
-                        uuid,
-                        titleName,
-                        "up-to-date",
-                        currentLastDownloaded,
-                        currentLastDownloaded,
-                        currentLastDownloaded,
-                        0,
-                        0,
-                        0,
-                        0,
-                        List.of(),
-                        List.of(),
-                        List.of(),
-                        Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()),
-                        "No chapters were returned by the source."
+                reconciledTitle.setChapterCount(0);
+                addOrUpdateTitle(reconciledTitle, new NewChapter(currentLastDownloaded));
+                return new PlannedTitleSync(
+                        reconciledTitle,
+                        null,
+                        buildTitleSyncResult(
+                                reconciledTitle,
+                                "up-to-date",
+                                currentLastDownloaded,
+                                currentLastDownloaded,
+                                currentLastDownloaded,
+                                0,
+                                0,
+                                0,
+                                0,
+                                List.of(),
+                                List.of(),
+                                List.of(),
+                                "No chapters were returned by the source."
+                        )
                 );
             }
 
-            TitleSyncComputation plan = computeTitleSync(title, chapters);
-            String nextLastDownloaded = plan.previousLastDownloaded();
-            List<String> downloadedDuringSync = new ArrayList<>();
-            List<String> failedChapters = new ArrayList<>();
-            DownloadProgress trackedTask = null;
+            TitleSyncComputation plan = computeTitleSync(reconciledTitle, chapters);
+            reconciledTitle.setChapterCount(plan.sourceChapterCount());
+            addOrUpdateTitle(reconciledTitle, new NewChapter(plan.previousLastDownloaded()));
 
-            if (!plan.queuedChapters().isEmpty()) {
-                trackedTask = downloadService.startTrackedTask(
-                        title,
-                        "title-sync",
-                        plan.queuedChapters(),
-                        plan.newChapterNumbers(),
-                        plan.missingChapterNumbers(),
-                        plan.latestChapter(),
-                        plan.sourceChapterCount(),
-                        buildTitleSyncMessage(plan.queuedChapters().size(), plan.newQueuedCount(), plan.missingQueuedCount())
+            if (plan.queuedChapters().isEmpty()) {
+                return new PlannedTitleSync(
+                        reconciledTitle,
+                        null,
+                        buildTitleSyncResult(
+                                reconciledTitle,
+                                "up-to-date",
+                                plan.latestChapter(),
+                                plan.previousLastDownloaded(),
+                                plan.previousLastDownloaded(),
+                                plan.sourceChapterCount(),
+                                0,
+                                0,
+                                0,
+                                List.of(),
+                                List.of(),
+                                List.of(),
+                                buildTitleSyncMessage(0, 0, 0)
+                        )
                 );
-                try {
-                    String latestSuccessfulChapter = null;
-                    for (String chapter : plan.queuedChapters()) {
-                        if (!downloadService.downloadSingleChapter(title, chapter, trackedTask)) {
-                            failedChapters.add(chapter);
-                            continue;
-                        }
+            }
 
-                        downloadedDuringSync.add(chapter);
-                        if (latestSuccessfulChapter == null || compareChapterNumbers(chapter, latestSuccessfulChapter) > 0) {
-                            latestSuccessfulChapter = chapter;
-                        }
+            return new PlannedTitleSync(
+                    reconciledTitle,
+                    plan,
+                    buildTitleSyncResult(
+                            reconciledTitle,
+                            "queued",
+                            plan.latestChapter(),
+                            plan.previousLastDownloaded(),
+                            plan.previousLastDownloaded(),
+                            plan.sourceChapterCount(),
+                            plan.queuedChapters().size(),
+                            plan.newQueuedCount(),
+                            plan.missingQueuedCount(),
+                            plan.queuedChapters(),
+                            plan.newChapterNumbers(),
+                            plan.missingChapterNumbers(),
+                            buildTitleSyncMessage(plan.queuedChapters().size(), plan.newQueuedCount(), plan.missingQueuedCount())
+                    )
+            );
+        } catch (Exception e) {
+            logger.warn("LIBRARY", "Failed to plan sync for " + titleName + ": " + e.getMessage());
+            return new PlannedTitleSync(
+                    reconciledTitle,
+                    null,
+                    buildTitleSyncResult(
+                            reconciledTitle,
+                            "error",
+                            currentLastDownloaded,
+                            currentLastDownloaded,
+                            currentLastDownloaded,
+                            0,
+                            0,
+                            0,
+                            0,
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            "Unable to check this title: " + e.getMessage()
+                    )
+            );
+        }
+    }
 
-                        if (compareChapterNumbers(chapter, nextLastDownloaded) > 0) {
-                            nextLastDownloaded = chapter;
-                        }
+    private void executeQueuedTitleSync(NewTitle title, TitleSyncComputation plan, DownloadProgress trackedTask) {
+        String titleName = Optional.ofNullable(title.getTitleName()).orElse("Untitled");
+        String nextLastDownloaded = plan.previousLastDownloaded();
+        List<String> failedChapters = new ArrayList<>();
 
-                        title.setLastDownloaded(nextLastDownloaded);
-                        title.setDownloadedChapterNumbers(mergeDownloadedChapterNumbers(title.getDownloadedChapterNumbers(), chapter));
-                        title.setChaptersDownloaded(Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()).size());
-                        addOrUpdateTitle(title, new NewChapter(chapter));
-                    }
-
-                    if (latestSuccessfulChapter != null) {
-                        scanKavitaLibraryForType(title.getType());
-                    }
-
-                    if (failedChapters.isEmpty()) {
-                        trackedTask.setMessage("Title sync completed.");
-                        trackedTask.markCompleted();
-                    } else {
-                        trackedTask.markInterrupted("Title sync paused with pending chapters: " + String.join(", ", failedChapters));
-                    }
-                    downloadService.updateTrackedTask(trackedTask);
-                } finally {
-                    downloadService.finalizeTrackedTask(titleName, trackedTask);
+        try {
+            String latestSuccessfulChapter = null;
+            for (String chapter : plan.queuedChapters()) {
+                if (!downloadService.downloadSingleChapter(title, chapter, trackedTask)) {
+                    failedChapters.add(chapter);
+                    continue;
                 }
+
+                if (latestSuccessfulChapter == null || compareChapterNumbers(chapter, latestSuccessfulChapter) > 0) {
+                    latestSuccessfulChapter = chapter;
+                }
+
+                if (compareChapterNumbers(chapter, nextLastDownloaded) > 0) {
+                    nextLastDownloaded = chapter;
+                }
+
+                title.setLastDownloaded(nextLastDownloaded);
+                title.setDownloadedChapterNumbers(mergeDownloadedChapterNumbers(title.getDownloadedChapterNumbers(), chapter));
+                title.setChaptersDownloaded(Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()).size());
+                addOrUpdateTitle(title, new NewChapter(chapter));
             }
 
+            if (latestSuccessfulChapter != null) {
+                scanKavitaLibraryForType(title.getType());
+            }
+
+            if (failedChapters.isEmpty()) {
+                trackedTask.setMessage("Title sync completed.");
+                trackedTask.markCompleted();
+            } else {
+                trackedTask.markInterrupted("Title sync paused with pending chapters: " + String.join(", ", failedChapters));
+            }
+            downloadService.updateTrackedTask(trackedTask);
+        } catch (Exception e) {
+            logger.warn("LIBRARY", "Failed to run queued sync for " + titleName + ": " + e.getMessage());
+            trackedTask.markFailed("Unable to check this title: " + e.getMessage());
+            downloadService.updateTrackedTask(trackedTask);
+        } finally {
             title.setChapterCount(plan.sourceChapterCount());
             title.setLastDownloaded(nextLastDownloaded);
             title.setDownloadedChapterNumbers(mergeDownloadedChapterNumbers(
@@ -1599,59 +1816,58 @@ public class LibraryService {
             ));
             title.setChaptersDownloaded(Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()).size());
             addOrUpdateTitle(title, new NewChapter(nextLastDownloaded));
+            downloadService.finalizeTrackedTask(titleName, trackedTask);
+        }
+    }
 
-            int totalQueued = plan.queuedChapters().size();
-            String status;
-            if (totalQueued <= 0) {
-                status = "up-to-date";
-            } else if (!failedChapters.isEmpty() && !downloadedDuringSync.isEmpty()) {
-                status = "partial";
-            } else if (!failedChapters.isEmpty()) {
-                status = "interrupted";
-            } else {
-                status = "updated";
-            }
-            String message = buildTitleSyncMessage(totalQueued, plan.newQueuedCount(), plan.missingQueuedCount());
-            if (!failedChapters.isEmpty()) {
-                message = message + " Pending retry: " + String.join(", ", failedChapters) + ".";
-            }
+    private void queueTitleSyncExecution(NewTitle title, TitleSyncComputation plan, boolean reserveLibraryCheck) {
+        if (title == null || plan == null || plan.queuedChapters().isEmpty()) {
+            return;
+        }
 
-            return new TitleSyncResult(
-                    uuid,
-                    titleName,
-                    status,
-                    plan.latestChapter(),
-                    plan.previousLastDownloaded(),
-                    nextLastDownloaded,
-                    plan.sourceChapterCount(),
-                    totalQueued,
-                    plan.newQueuedCount(),
-                    plan.missingQueuedCount(),
-                    plan.queuedChapters(),
-                    plan.newChapterNumbers(),
-                    plan.missingChapterNumbers(),
-                    Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()),
-                    message
-            );
-        } catch (Exception e) {
-            logger.warn("LIBRARY", "Failed to check/update " + titleName + ": " + e.getMessage());
-            return new TitleSyncResult(
-                    uuid,
-                    titleName,
-                    "error",
-                    currentLastDownloaded,
-                    currentLastDownloaded,
-                    currentLastDownloaded,
-                    0,
-                    0,
-                    0,
-                    0,
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    Optional.ofNullable(title.getDownloadedChapterNumbers()).orElse(List.of()),
-                    "Unable to check this title: " + e.getMessage()
-            );
+        if (reserveLibraryCheck) {
+            pendingLibraryCheckTasks.incrementAndGet();
+        }
+
+        String titleName = Optional.ofNullable(title.getTitleName()).orElse("Untitled");
+        DownloadProgress trackedTask = downloadService.startTrackedTask(
+                title,
+                "title-sync",
+                plan.queuedChapters(),
+                plan.newChapterNumbers(),
+                plan.missingChapterNumbers(),
+                plan.latestChapter(),
+                plan.sourceChapterCount(),
+                buildTitleSyncMessage(plan.queuedChapters().size(), plan.newQueuedCount(), plan.missingQueuedCount()),
+                false
+        );
+
+        try {
+            downloadService.queueTrackedTask(titleName, trackedTask, () -> {
+                try {
+                    executeQueuedTitleSync(title, plan, trackedTask);
+                } finally {
+                    if (reserveLibraryCheck) {
+                        completeQueuedLibraryCheckTask();
+                    }
+                }
+            });
+        } catch (RuntimeException e) {
+            logger.warn("LIBRARY", "Failed to queue sync for " + titleName + ": " + e.getMessage());
+            trackedTask.markFailed("Unable to queue Raven sync: " + e.getMessage());
+            downloadService.finalizeTrackedTask(titleName, trackedTask);
+            if (reserveLibraryCheck) {
+                completeQueuedLibraryCheckTask();
+            }
+            throw e;
+        }
+    }
+
+    private void completeQueuedLibraryCheckTask() {
+        int remaining = pendingLibraryCheckTasks.decrementAndGet();
+        if (remaining <= 0) {
+            pendingLibraryCheckTasks.set(0);
+            libraryCheckQueuedOrRunning.set(false);
         }
     }
 
@@ -1674,7 +1890,29 @@ public class LibraryService {
 
         updateCurrentCheckActivity("single", title.getTitleName(), 0, 1);
         try {
-            return syncTitleChapters(title);
+            PlannedTitleSync plannedTitleSync = planTitleSync(title);
+            if (plannedTitleSync.shouldQueueExecution()) {
+                try {
+                    queueTitleSyncExecution(plannedTitleSync.title(), plannedTitleSync.plan(), false);
+                } catch (RuntimeException e) {
+                    return buildTitleSyncResult(
+                            plannedTitleSync.title(),
+                            "error",
+                            plannedTitleSync.result().latestChapter(),
+                            plannedTitleSync.result().previousLastDownloaded(),
+                            plannedTitleSync.result().currentLastDownloaded(),
+                            plannedTitleSync.result().sourceChapterCount(),
+                            0,
+                            0,
+                            0,
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            "Unable to queue this title: " + e.getMessage()
+                    );
+                }
+            }
+            return plannedTitleSync.result();
         } finally {
             clearCurrentCheckActivity();
         }
@@ -1693,22 +1931,61 @@ public class LibraryService {
             return new LibrarySyncSummary(0, 0, 0, 0, 0, List.of(), "No titles in library.");
         }
 
+        if (!libraryCheckQueuedOrRunning.compareAndSet(false, true)) {
+            return new LibrarySyncSummary(
+                    titles.size(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    List.of(),
+                    "A Raven library check is already queued or running."
+            );
+        }
+        pendingLibraryCheckTasks.set(1);
+
         List<TitleSyncResult> results = new ArrayList<>();
         int updatedTitles = 0;
         int queuedChapters = 0;
         int newChaptersQueued = 0;
         int missingChaptersQueued = 0;
+        int errorTitles = 0;
 
         try {
             for (int index = 0; index < titles.size(); index++) {
                 NewTitle title = titles.get(index);
                 updateCurrentCheckActivity("library", title.getTitleName(), index, titles.size());
 
-                TitleSyncResult result = syncTitleChapters(title);
+                PlannedTitleSync plannedTitleSync = planTitleSync(title);
+                TitleSyncResult result = plannedTitleSync.result();
                 results.add(result);
 
-                if ("updated".equals(result.status())) {
+                if ("queued".equals(result.status())) {
                     updatedTitles++;
+                    try {
+                        queueTitleSyncExecution(plannedTitleSync.title(), plannedTitleSync.plan(), true);
+                    } catch (RuntimeException e) {
+                        errorTitles++;
+                        updatedTitles--;
+                        result = buildTitleSyncResult(
+                                plannedTitleSync.title(),
+                                "error",
+                                result.latestChapter(),
+                                result.previousLastDownloaded(),
+                                result.currentLastDownloaded(),
+                                result.sourceChapterCount(),
+                                0,
+                                0,
+                                0,
+                                List.of(),
+                                List.of(),
+                                List.of(),
+                                "Unable to queue this title: " + e.getMessage()
+                        );
+                        results.set(results.size() - 1, result);
+                    }
+                } else if ("error".equals(result.status())) {
+                    errorTitles++;
                 }
 
                 queuedChapters += result.totalQueued();
@@ -1718,10 +1995,16 @@ public class LibraryService {
         } finally {
             clearCurrentCheckActivity();
         }
+        completeQueuedLibraryCheckTask();
 
-        String message = queuedChapters == 0
-                ? "All titles are up-to-date."
-                : "Queued " + queuedChapters + " chapter(s) across " + updatedTitles + " title(s).";
+        String message;
+        if (queuedChapters > 0) {
+            message = "Queued " + queuedChapters + " chapter(s) across " + updatedTitles + " title(s).";
+        } else if (errorTitles > 0) {
+            message = "No chapters were queued. " + errorTitles + " title(s) failed during planning.";
+        } else {
+            message = "All titles are up-to-date.";
+        }
 
         return new LibrarySyncSummary(
                 titles.size(),
@@ -1786,7 +2069,11 @@ public class LibraryService {
                         scanTypes.add(importedTitle.getType());
                     }
 
-                    TitleSyncResult syncResult = syncTitleChapters(importedTitle);
+                    PlannedTitleSync plannedTitleSync = planTitleSync(importedTitle);
+                    TitleSyncResult syncResult = plannedTitleSync.result();
+                    if (plannedTitleSync.shouldQueueExecution()) {
+                        queueTitleSyncExecution(plannedTitleSync.title(), plannedTitleSync.plan(), false);
+                    }
                     queuedChapters += syncResult.totalQueued();
                     newChaptersQueued += syncResult.newChaptersQueued();
                     missingChaptersQueued += syncResult.missingChaptersQueued();
@@ -1914,6 +2201,16 @@ public class LibraryService {
             int missingQueuedCount,
             int sourceChapterCount
     ) {
+    }
+
+    private record PlannedTitleSync(
+            NewTitle title,
+            TitleSyncComputation plan,
+            TitleSyncResult result
+    ) {
+        private boolean shouldQueueExecution() {
+            return plan != null && result != null && "queued".equals(result.status());
+        }
     }
 
     /**

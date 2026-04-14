@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/LibraryService.java
  * - src/main/java/com/paxkun/raven/service/LoggerService.java
  * - src/main/java/com/paxkun/raven/service/download/DownloadSearchRequest.java
- * Times this file has been edited: 17
+ * Times this file has been edited: 18
  */
 package com.paxkun.raven.controller;
 
@@ -133,6 +133,7 @@ public class DownloadController {
     public ResponseEntity<QueueDownloadResult> queueDownload(@RequestBody(required = false) QueueDownloadRequest request) {
         String searchId = request != null && request.searchId() != null ? request.searchId().trim() : "";
         Integer optionIndex = request != null ? request.optionIndex() : null;
+        boolean allowDownloadWithoutVpn = request != null && Boolean.TRUE.equals(request.allowDownloadWithoutVpn());
         if (searchId.isBlank() || optionIndex == null) {
             QueueDownloadResult invalid = new QueueDownloadResult(
                     QueueDownloadResult.STATUS_INVALID_SELECTION,
@@ -148,7 +149,11 @@ public class DownloadController {
         logger.debug(
                 "DOWNLOAD_CONTROLLER",
                 "Queue request received | searchId=" + sanitizedSearchId + " | optionIndex=" + optionIndex);
-        QueueDownloadResult result = downloadService.queueDownloadAllChaptersResult(searchId, optionIndex);
+        QueueDownloadResult result = downloadService.queueDownloadAllChaptersResult(
+                searchId,
+                optionIndex,
+                allowDownloadWithoutVpn
+        );
         logger.debug(
                 "DOWNLOAD_CONTROLLER",
                 "Queue response | searchId=" + sanitizedSearchId +
@@ -253,11 +258,7 @@ public class DownloadController {
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("activeDownloads", downloadService.getActiveDownloadCount());
         payload.put("maxThreads", downloadService.getConfiguredDownloadThreads());
-        payload.put("threadRateLimitsKbps", downloadService.getThreadRateLimitsKbps());
-        payload.put("workerExecutionMode", downloadService.getWorkerExecutionMode());
-        payload.put("workerCpuCoreIds", downloadService.getWorkerCpuCoreIds());
-        payload.put("availableCpuIds", downloadService.getAvailableCpuIds());
-        payload.put("activeWorkers", downloadService.getActiveWorkers());
+        payload.put("overallSpeedLimitKbps", downloadService.getOverallSpeedLimitKbps());
         payload.put("vpn", vpnServices.getStatus());
         if (currentTask != null) {
             payload.put("currentTask", toTaskPayload(currentTask));
@@ -404,6 +405,7 @@ public class DownloadController {
         payload.put("taskType", progress.getTaskType());
         payload.put("title", progress.getTitle());
         payload.put("titleUuid", progress.getTitleUuid());
+        payload.put("coverUrl", progress.getCoverUrl());
         payload.put("currentChapter", progress.getCurrentChapter());
         payload.put("currentChapterNumber", progress.getCurrentChapterNumber());
         payload.put("completedChapters", progress.getCompletedChapters());
@@ -422,11 +424,8 @@ public class DownloadController {
         payload.put("remainingChapterNumbers", progress.getRemainingChapterNumbers());
         payload.put("newChapterNumbers", progress.getNewChapterNumbers());
         payload.put("missingChapterNumbers", progress.getMissingChapterNumbers());
-        payload.put("workerIndex", progress.getWorkerIndex());
-        payload.put("cpuCoreId", progress.getCpuCoreId());
-        payload.put("workerPid", progress.getWorkerPid());
-        payload.put("executionMode", progress.getExecutionMode());
         payload.put("pauseRequested", progress.isPauseRequested());
+        payload.put("allowDownloadWithoutVpn", progress.isAllowDownloadWithoutVpn());
         return payload;
     }
 

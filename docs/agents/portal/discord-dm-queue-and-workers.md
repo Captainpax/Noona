@@ -53,8 +53,9 @@
 - Admin-comment DM:
   sent for timeline events shaped like a `comment` from an admin actor with a non-empty body
 - Completion DM:
-  sent once Raven has either produced a matching library title or the recommendation timeline already shows download
-  completion
+  sent once Portal can resolve both a matching library title and a direct Kavita series URL for the recommendation
+- A `download-completed` timeline event may be recorded before that final DM.
+  It tracks downloader progress only and no longer means the title is already ready for users.
 - Notification markers persist back into the recommendation document under `notifications.*` so restarts do not resend
   the same DM
 
@@ -64,9 +65,10 @@
   download started,
   periodic progress milestones,
   download completed
-- Completion links prefer a direct Kavita series URL when Portal can resolve one.
-  Otherwise the worker can link back to Moon's recommendation page.
+- Approval and admin-comment links can point back to Moon's recommendation page.
+- Completion links now require a direct Kavita series URL.
 - Moon links prefer configured `MOON_BASE_URL` and otherwise fall back to Warden-discovered Moon service URLs.
+- Discord-visible copy for approval, admin-comment, completion, and subscription messages stays Noona-branded.
 - Deferred metadata application also runs here after Raven import succeeds.
   That path can call Kavita metadata APIs, Komf identify APIs, Raven cover updates, and Raven chapter-volume mapping.
 
@@ -89,7 +91,7 @@
 ## Message Shape And Ordering
 
 - Recommendation DMs are richer than subscription DMs.
-  They can include approver names, Moon links, Kavita links, and metadata/timeline side effects.
+  They can include approver names, Noona-labeled direct links, request-page links, and metadata/timeline side effects.
 - Subscription DMs stay deliberately short:
   title,
   chapter label,

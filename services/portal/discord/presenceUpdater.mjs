@@ -5,7 +5,7 @@
  * - clients/ravenClient.mjs
  * - tests/presenceUpdater.test.mjs
  * - app/portalRuntime.mjs
- * Times this file has been edited: 3
+ * Times this file has been edited: 4
  */
 
 import {ActivityType} from 'discord.js';
@@ -76,7 +76,7 @@ const resolveRavenDownloadActivity = (ravenSummary) => {
         const extraCount = activeDownloads > 1 ? ` (+${activeDownloads - 1})` : '';
         return {
             activityType: ActivityType.Watching,
-            name: truncate(title ? `Downloading ${title}${extraCount}` : 'Downloading from Raven'),
+            name: truncate(title ? `Downloading ${title}${extraCount}` : 'Downloading in Noona'),
             status: 'online',
         };
     }
@@ -84,7 +84,7 @@ const resolveRavenDownloadActivity = (ravenSummary) => {
     if (taskStatus === 'recovering') {
         return {
             activityType: ActivityType.Watching,
-            name: truncate(title ? `Recovering ${title}` : 'Recovering Raven task'),
+            name: truncate(title ? `Recovering ${title}` : 'Recovering a Noona task'),
             status: 'idle',
         };
     }
@@ -92,7 +92,7 @@ const resolveRavenDownloadActivity = (ravenSummary) => {
     if (taskStatus === 'queued') {
         return {
             activityType: ActivityType.Watching,
-            name: truncate(title ? `Queued ${title}` : 'Queued in Raven'),
+            name: truncate(title ? `Queued ${title}` : 'Queued in Noona'),
             status: 'idle',
         };
     }
@@ -111,7 +111,7 @@ export const resolveDiscordPresenceSnapshot = ({serviceActivity = null, ravenSum
     if (serviceLabel) {
         return {
             activityType: ActivityType.Watching,
-            name: truncate(`Updating ${serviceLabel}`),
+            name: truncate('Updating Noona'),
             status: 'dnd',
         };
     }

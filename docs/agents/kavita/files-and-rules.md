@@ -36,6 +36,8 @@
 - The Noona login handoff signs an existing Kavita user in; it does not currently create a new Kavita user on demand.
 - Keep UI and API password-login behavior aligned when `NOONA_SOCIAL_LOGIN_ONLY` changes. A hidden form without server
   enforcement, or server enforcement without the UI hint, creates a bad operator and user experience.
+- Keep managed first-user registration behavior aligned too. If the API blocks direct managed registration, the browser
+  must stay on the Noona login surface instead of exposing Kavita's upstream first-admin form.
 - User-visible bootstrap or login-handoff changes must update
   [../../../services/kavita/README.md](../../../services/kavita/README.md) and
   [../../../ServerAdmin.md](../../../ServerAdmin.md).

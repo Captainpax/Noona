@@ -278,6 +278,34 @@ export const createPortalClient = ({
             })
             return await parseResponsePayload(response)
         },
+
+        async sendDiscordOnboardingTestMessage(payload = {}) {
+            const channelId = typeof payload?.channelId === 'string' ? payload.channelId.trim() : ''
+            if (!channelId) {
+                throw new Error('channelId is required.')
+            }
+
+            const content = typeof payload?.content === 'string' ? payload.content : ''
+            if (!content.trim()) {
+                throw new Error('content is required.')
+            }
+
+            const response = await requestPortal('/api/portal/discord/onboarding-message/test', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', Accept: 'application/json'},
+                body: JSON.stringify({
+                    channelId,
+                    content,
+                }),
+            }, {
+                acceptStatuses: [400, 503],
+            })
+
+            return {
+                status: response.status,
+                payload: await parseResponsePayload(response),
+            }
+        },
     }
 }
 

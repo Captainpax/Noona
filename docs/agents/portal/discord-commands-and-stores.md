@@ -6,6 +6,8 @@
   simple health-style Discord reply
 - `scan`
   queues a Kavita library scan
+  and now returns actionable auth or missing-library errors instead of falling through to Discord's generic command
+  failure text
 - `search`
   searches Kavita titles
 - `recommend`
@@ -90,7 +92,7 @@ The legacy `join` command is intentionally absent. Tests lock that in.
   admin-comment DMs
   Raven download timeline events
   deferred metadata apply
-  completion DMs with Moon/Kavita links
+  request-page links while work is in progress plus completion DMs with Kavita links once import is ready
 - Subscription notifier responsibility:
   DM each newly completed chapter exactly once per subscriber/title key
 

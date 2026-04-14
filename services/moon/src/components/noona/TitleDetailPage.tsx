@@ -1047,9 +1047,9 @@ export function TitleDetailPage({uuid}: { uuid: string }) {
                                             Sync planner
                                         </Heading>
                                         <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
-                                            Raven now tracks a stored chapter index for this title, so missing-chapter
-                                            checks
-                                            no longer depend on guessing chapter numbers from archive file names.
+                                            Raven now tracks a stored chapter index for this title and refreshes it
+                                            from the downloaded files, so missing-chapter checks no longer depend on
+                                            guessing chapter numbers from archive file names.
                                         </Text>
                                     </Column>
                                     <Badge background="neutral-alpha-weak" onBackground="neutral-strong">
@@ -1643,7 +1643,8 @@ export function TitleDetailPage({uuid}: { uuid: string }) {
                                 </Heading>
 
                                 <Text onBackground="neutral-weak" variant="body-default-xs">
-                                    This removes the title record from the library (downloads on disk are not deleted).
+                                    This removes the title record from the library and deletes the managed download
+                                    folder on disk.
                                 </Text>
 
                                 <Row gap="12" style={{flexWrap: "wrap"}}>

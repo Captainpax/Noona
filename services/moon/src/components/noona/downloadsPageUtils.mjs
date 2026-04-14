@@ -1,5 +1,6 @@
 export const VPN_WAIT_MESSAGE = "Waiting for Raven VPN connection before download starts.";
-export const DOWNLOADS_CAROUSEL_LIMIT = 10;
+export const DOWNLOADS_CAROUSEL_LIMIT = Number.POSITIVE_INFINITY;
+export const RECENT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export const normalizeString = (value) => (typeof value === "string" ? value : "");
 
@@ -10,9 +11,18 @@ export const normalizeNumberList = (value) => {
         .filter(Boolean);
 };
 
+export const normalizeEpochMs = (value) => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        return 0;
+    }
+
+    return Math.trunc(value);
+};
+
 export const formatEpochMs = (value) => {
-    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "";
-    return new Date(value).toLocaleString();
+    const normalized = normalizeEpochMs(value);
+    if (normalized <= 0) return "";
+    return new Date(normalized).toLocaleString();
 };
 
 export const parseErrorMessage = (json, fallback) => {
@@ -36,6 +46,36 @@ export const isTerminalStatus = (statusRaw) => {
         || status === "canceled";
 };
 
+export const getTaskStatusRank = (statusRaw) => {
+    const status = normalizeString(statusRaw).trim().toLowerCase();
+    if (status === "downloading") return 0;
+    if (status === "recovering") return 1;
+    if (status === "queued") return 2;
+    if (status === "interrupted") return 3;
+    if (status === "paused") return 4;
+    if (status === "completed") return 5;
+    if (status === "failed" || status === "error") return 6;
+    return 7;
+};
+
+export const getTaskStatusBadgeBackground = (statusRaw) => {
+    const status = normalizeString(statusRaw).trim().toLowerCase();
+    if (status === "completed") return "success-alpha-weak";
+    if (status === "failed" || status === "interrupted") return "danger-alpha-weak";
+    if (status === "paused") return "warning-alpha-weak";
+    if (status === "recovering" || status === "downloading") return "brand-alpha-weak";
+    return "neutral-alpha-weak";
+};
+
+export const getTaskProgressTone = (statusRaw) => {
+    const status = normalizeString(statusRaw).trim().toLowerCase();
+    if (status === "completed") return "success-strong";
+    if (status === "failed" || status === "interrupted") return "danger-strong";
+    if (status === "paused") return "warning-strong";
+    if (status === "queued") return "neutral-strong";
+    return "brand-strong";
+};
+
 const clampPercent = (value) => Math.min(100, Math.max(0, value));
 
 export const buildTaskKey = (entry, fallbackIndex = 0) => {
@@ -46,50 +86,41 @@ export const buildTaskKey = (entry, fallbackIndex = 0) => {
 
     const titleUuid = normalizeString(entry?.titleUuid).trim();
     const title = normalizeString(entry?.title).trim() || "untitled";
-    const timestamp = typeof entry?.queuedAt === "number" && Number.isFinite(entry.queuedAt)
-        ? entry.queuedAt
-        : typeof entry?.startedAt === "number" && Number.isFinite(entry.startedAt)
-            ? entry.startedAt
-            : typeof entry?.completedAt === "number" && Number.isFinite(entry.completedAt)
-                ? entry.completedAt
-                : fallbackIndex;
+    const timestamp = normalizeEpochMs(entry?.queuedAt)
+        || normalizeEpochMs(entry?.startedAt)
+        || normalizeEpochMs(entry?.completedAt)
+        || fallbackIndex;
 
     return `${titleUuid || title}:${timestamp}`;
 };
 
-export const compareTaskEntries = (left, right) => {
-    const rank = (statusRaw) => {
-        const status = normalizeString(statusRaw).trim().toLowerCase();
-        if (status === "downloading") return 0;
-        if (status === "recovering") return 1;
-        if (status === "queued") return 2;
-        if (status === "interrupted") return 3;
-        if (status === "paused") return 4;
-        if (status === "completed") return 5;
-        if (status === "failed" || status === "error") return 6;
-        return 7;
-    };
+export const resolveTaskTimestamps = (entry) => {
+    const queuedAt = normalizeEpochMs(entry?.queuedAt);
+    const startedAt = normalizeEpochMs(entry?.startedAt);
+    const lastUpdated = normalizeEpochMs(entry?.lastUpdated);
+    const completedAt = normalizeEpochMs(entry?.completedAt);
+    const updatedAt = Math.max(lastUpdated, startedAt, queuedAt);
+    const effectiveTimestamp = completedAt || updatedAt || queuedAt || startedAt;
 
-    const leftRank = rank(left?.status);
-    const rightRank = rank(right?.status);
+    return {
+        queuedAt,
+        startedAt,
+        updatedAt,
+        completedAt,
+        effectiveTimestamp,
+    };
+};
+
+export const compareTaskEntries = (left, right) => {
+    const leftRank = getTaskStatusRank(left?.status);
+    const rightRank = getTaskStatusRank(right?.status);
     if (leftRank !== rightRank) {
         return leftRank - rightRank;
     }
 
-    const leftUpdated = Math.max(
-        typeof left?.lastUpdated === "number" && Number.isFinite(left.lastUpdated) ? left.lastUpdated : 0,
-        typeof left?.startedAt === "number" && Number.isFinite(left.startedAt) ? left.startedAt : 0,
-        typeof left?.queuedAt === "number" && Number.isFinite(left.queuedAt) ? left.queuedAt : 0,
-        typeof left?.completedAt === "number" && Number.isFinite(left.completedAt) ? left.completedAt : 0,
-    );
-    const rightUpdated = Math.max(
-        typeof right?.lastUpdated === "number" && Number.isFinite(right.lastUpdated) ? right.lastUpdated : 0,
-        typeof right?.startedAt === "number" && Number.isFinite(right.startedAt) ? right.startedAt : 0,
-        typeof right?.queuedAt === "number" && Number.isFinite(right.queuedAt) ? right.queuedAt : 0,
-        typeof right?.completedAt === "number" && Number.isFinite(right.completedAt) ? right.completedAt : 0,
-    );
-
-    return rightUpdated - leftUpdated;
+    const leftTimestamps = resolveTaskTimestamps(left);
+    const rightTimestamps = resolveTaskTimestamps(right);
+    return rightTimestamps.effectiveTimestamp - leftTimestamps.effectiveTimestamp;
 };
 
 export const formatTaskListPreview = (values, limit = 10) => {
@@ -102,7 +133,15 @@ export const formatTaskListPreview = (values, limit = 10) => {
     return hiddenCount > 0 ? `${preview} +${hiddenCount} more` : preview;
 };
 
-export const resolveTaskView = (entry, fallbackIndex = 0) => {
+const humanizeStatus = (value) => {
+    const normalized = normalizeString(value).trim();
+    if (!normalized) return "";
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+export const resolveTaskSourceLabel = (source) => (source === "recentHistory" ? "Last 24h" : "Active");
+
+export const resolveTaskView = (entry, fallbackIndex = 0, source = "active") => {
     const queued = normalizeNumberList(entry?.queuedChapterNumbers);
     const remaining = normalizeNumberList(entry?.remainingChapterNumbers);
     const newChapters = normalizeNumberList(entry?.newChapterNumbers);
@@ -116,14 +155,21 @@ export const resolveTaskView = (entry, fallbackIndex = 0) => {
         typeof entry?.completedChapters === "number" && Number.isFinite(entry.completedChapters)
             ? entry.completedChapters
             : completedChapterNumbers.length;
-    const status = normalizeString(entry?.status).trim().toLowerCase() || "unknown";
+    const statusRaw = normalizeString(entry?.status).trim() || "unknown";
+    const status = statusRaw.toLowerCase();
     const percent = total > 0 ? clampPercent((completed / total) * 100) : 0;
+    const timestamps = resolveTaskTimestamps(entry);
 
     return {
         key: buildTaskKey(entry, fallbackIndex),
         titleName: normalizeString(entry?.title).trim() || "Untitled",
-        statusRaw: normalizeString(entry?.status).trim() || "unknown",
+        titleUuid: normalizeString(entry?.titleUuid).trim(),
+        coverUrl: normalizeString(entry?.coverUrl).trim(),
+        source,
+        sourceLabel: resolveTaskSourceLabel(source),
+        statusRaw,
         status,
+        statusRank: getTaskStatusRank(statusRaw),
         taskType: normalizeString(entry?.taskType).trim(),
         current: normalizeString(entry?.currentChapter).trim(),
         latestChapter: normalizeString(entry?.latestChapter).trim(),
@@ -140,19 +186,14 @@ export const resolveTaskView = (entry, fallbackIndex = 0) => {
         completedChapterNumbers,
         recovered: entry?.recoveredFromCache === true,
         recoveryState: normalizeString(entry?.recoveryState).trim(),
-        workerIndex:
-            typeof entry?.workerIndex === "number" && Number.isFinite(entry.workerIndex)
-                ? entry.workerIndex
-                : null,
-        cpuCoreId:
-            typeof entry?.cpuCoreId === "number" && Number.isFinite(entry.cpuCoreId)
-                ? entry.cpuCoreId
-                : null,
-        executionMode: normalizeString(entry?.executionMode).trim() || "thread",
         pauseRequested: entry?.pauseRequested === true,
-        queuedAtLabel: formatEpochMs(entry?.queuedAt),
-        updatedAtLabel: formatEpochMs(entry?.lastUpdated ?? entry?.startedAt),
-        completedAtLabel: formatEpochMs(entry?.completedAt),
+        queuedAt: timestamps.queuedAt,
+        updatedAt: timestamps.updatedAt,
+        completedAt: timestamps.completedAt,
+        effectiveTimestamp: timestamps.effectiveTimestamp,
+        queuedAtLabel: formatEpochMs(timestamps.queuedAt),
+        updatedAtLabel: formatEpochMs(timestamps.updatedAt),
+        completedAtLabel: formatEpochMs(timestamps.completedAt),
     };
 };
 
@@ -160,16 +201,124 @@ export const resolveActiveTaskViews = (downloads = []) =>
     (Array.isArray(downloads) ? downloads : [])
         .filter((entry) => entry && typeof entry === "object" && !isTerminalStatus(entry.status))
         .sort(compareTaskEntries)
-        .map((entry, index) => resolveTaskView(entry, index));
+        .map((entry, index) => resolveTaskView(entry, index, "active"));
+
+export const resolveRecentHistoryTaskViews = (
+    historyEntries = [],
+    {now = Date.now(), windowMs = RECENT_HISTORY_WINDOW_MS} = {},
+) => {
+    const cutoff = Math.max(0, normalizeEpochMs(now) - Math.max(0, windowMs));
+    return (Array.isArray(historyEntries) ? historyEntries : [])
+        .filter((entry) => entry && typeof entry === "object" && isTerminalStatus(entry.status))
+        .map((entry, index) => resolveTaskView(entry, index, "recentHistory"))
+        .filter((task) => task.effectiveTimestamp >= cutoff)
+        .sort((left, right) => right.effectiveTimestamp - left.effectiveTimestamp);
+};
+
+export const resolveCombinedTaskViews = (
+    downloads = [],
+    historyEntries = [],
+    options = {},
+) => {
+    const activeTasks = resolveActiveTaskViews(downloads);
+    const recentHistoryTasks = resolveRecentHistoryTaskViews(historyEntries, options);
+    const seen = new Set();
+
+    return [...activeTasks, ...recentHistoryTasks].filter((task) => {
+        if (seen.has(task.key)) {
+            return false;
+        }
+
+        seen.add(task.key);
+        return true;
+    });
+};
 
 export const selectCarouselTaskViews = (taskViews, limit = DOWNLOADS_CAROUSEL_LIMIT) =>
-    (Array.isArray(taskViews) ? taskViews : []).slice(0, limit);
+    (Array.isArray(taskViews) ? taskViews : [])
+        .filter((task) => task?.source === "active")
+        .slice(0, limit);
 
-export const countResumableHistoryTasks = (historyEntries = []) =>
-    (Array.isArray(historyEntries) ? historyEntries : []).reduce((count, entry) => {
-        const status = normalizeString(entry?.status).trim().toLowerCase();
-        return status === "paused" || status === "interrupted" ? count + 1 : count;
-    }, 0);
+export const isTaskNeedingAttention = (task) => {
+    const status = normalizeString(task?.statusRaw ?? task?.status).trim().toLowerCase();
+    if (status === "failed" || status === "error" || status === "interrupted" || status === "paused") {
+        return true;
+    }
+
+    return Boolean(normalizeString(task?.errorMessage).trim());
+};
+
+export const filterTaskViews = (
+    taskViews = [],
+    {bucket = "all", status = "all"} = {},
+) => (Array.isArray(taskViews) ? taskViews : []).filter((task) => {
+    if (bucket !== "all" && task?.source !== bucket) {
+        return false;
+    }
+
+    if (status === "all") {
+        return true;
+    }
+
+    if (status === "needsAttention") {
+        return isTaskNeedingAttention(task);
+    }
+
+    return normalizeString(task?.statusRaw ?? task?.status).trim().toLowerCase() === status;
+});
+
+const compareStrings = (left, right) => left.localeCompare(right, undefined, {sensitivity: "base"});
+
+export const sortTaskViews = (
+    taskViews = [],
+    {sortKey = "newest", direction = "descending"} = {},
+) => {
+    const directionMultiplier = direction === "ascending" ? 1 : -1;
+
+    return [...(Array.isArray(taskViews) ? taskViews : [])].sort((left, right) => {
+        const sourceRank = (task) => (task?.source === "active" ? 0 : 1);
+        const bySource = sourceRank(left) - sourceRank(right);
+        if (bySource !== 0) {
+            return bySource;
+        }
+
+        let comparison = 0;
+        if (sortKey === "status") {
+            comparison = (left?.statusRank ?? 0) - (right?.statusRank ?? 0);
+        } else if (sortKey === "progress") {
+            comparison = (left?.progressValue ?? 0) - (right?.progressValue ?? 0);
+        } else if (sortKey === "title") {
+            comparison = compareStrings(
+                normalizeString(left?.titleName).trim(),
+                normalizeString(right?.titleName).trim(),
+            );
+        } else {
+            comparison = (left?.effectiveTimestamp ?? 0) - (right?.effectiveTimestamp ?? 0);
+        }
+
+        if (comparison !== 0) {
+            return comparison * directionMultiplier;
+        }
+
+        const byTime = (right?.effectiveTimestamp ?? 0) - (left?.effectiveTimestamp ?? 0);
+        if (byTime !== 0) {
+            return byTime;
+        }
+
+        const byTitle = compareStrings(
+            normalizeString(left?.titleName).trim(),
+            normalizeString(right?.titleName).trim(),
+        );
+        if (byTitle !== 0) {
+            return byTitle;
+        }
+
+        return compareStrings(
+            normalizeString(left?.key).trim(),
+            normalizeString(right?.key).trim(),
+        );
+    });
+};
 
 export const buildVpnBlockerDetails = (task, vpnStatus) => {
     if (!task || !vpnStatus || vpnStatus.enabled !== true || !isVpnWaitingMessage(task.message)) {
@@ -255,3 +404,29 @@ export const describeTaskStatus = (task, vpnStatus) => {
         vpnBlocker: null,
     };
 };
+
+export const describeCarouselTaskLine = (task, vpnStatus) => describeTaskStatus(task, vpnStatus).text
+    || humanizeStatus(task?.statusRaw ?? task?.status)
+    || "Waiting for Raven to report progress.";
+
+export const describeTaskTime = (task) => {
+    if (task?.source === "recentHistory" && normalizeString(task?.completedAtLabel).trim()) {
+        return `Completed ${task.completedAtLabel}`;
+    }
+
+    if (normalizeString(task?.updatedAtLabel).trim()) {
+        return `${task?.source === "active" ? "Updated" : "Last update"} ${task.updatedAtLabel}`;
+    }
+
+    if (normalizeString(task?.queuedAtLabel).trim()) {
+        return `Queued ${task.queuedAtLabel}`;
+    }
+
+    return "No timestamp yet";
+};
+
+export const countResumableHistoryTasks = (historyEntries = []) =>
+    (Array.isArray(historyEntries) ? historyEntries : []).reduce((count, entry) => {
+        const status = normalizeString(entry?.status).trim().toLowerCase();
+        return status === "paused" || status === "interrupted" ? count + 1 : count;
+    }, 0);

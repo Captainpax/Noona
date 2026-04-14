@@ -5,7 +5,7 @@
  * - config/portalConfig.mjs
  * - discord/client.mjs
  * - clients/kavitaClient.mjs
- * Times this file has been edited: 20
+ * Times this file has been edited: 21
  */
 
 import {errMSG, log} from '../../../utilities/etc/logger.mjs';
@@ -19,12 +19,16 @@ import {safeLoadPortalConfig} from '../config/portalConfig.mjs';
 import {createDiscordClient} from '../discord/client.mjs';
 import {createDirectMessageHandler} from '../discord/directMessageRouter.mjs';
 import {createDiscordPresenceUpdater} from '../discord/presenceUpdater.mjs';
+import {createChapterReleaseNotifier} from '../discord/chapterReleaseNotifier.mjs';
 import {createRecommendationNotifier} from '../discord/recommendationNotifier.mjs';
 import {createSubscriptionNotifier} from '../discord/subscriptionNotifier.mjs';
 import {createPortalSlashCommands} from '../commands/index.mjs';
 
+const ONBOARDING_SETTINGS_KEY = 'discord.onboarding_message';
+
 const runtime = {
     closeServer: null,
+    chapterReleaseNotifier: null,
     config: null,
     discord: null,
     discordStatus: null,
@@ -66,6 +70,92 @@ const resolveRuntimeLogger = (overrides = {}) => ({
     error: typeof overrides.error === 'function' ? overrides.error : errMSG,
 });
 
+const normalizeString = value => (typeof value === 'string' ? value.trim() : '');
+
+const replaceTemplateToken = (template, token, value) => {
+    if (!template.includes(token) || !value) {
+        return template;
+    }
+
+    return template.split(token).join(value);
+};
+
+const resolveServerIpPlaceholderValue = (config = {}) => {
+    const candidateUrls = [
+        config?.moon?.baseUrl,
+        config?.warden?.baseUrl,
+    ];
+
+    for (const candidate of candidateUrls) {
+        const normalized = normalizeString(candidate);
+        if (!normalized) {
+            continue;
+        }
+
+        try {
+            return new URL(normalized).hostname;
+        } catch {
+            // Ignore malformed values and keep searching.
+        }
+    }
+
+    return '';
+};
+
+const renderOnboardingMessage = ({template, member, config}) => {
+    const mention = normalizeString(member?.id) ? `<@${member.id}>` : '';
+    let rendered = normalizeString(template);
+    rendered = replaceTemplateToken(rendered, '{user_mention}', mention);
+    rendered = replaceTemplateToken(rendered, '{guild_name}', normalizeString(member?.guild?.name));
+    rendered = replaceTemplateToken(rendered, '{guild_id}', normalizeString(member?.guild?.id));
+    rendered = replaceTemplateToken(rendered, '{moon_url}', normalizeString(config?.moon?.baseUrl));
+    rendered = replaceTemplateToken(
+        rendered,
+        '{kavita_url}',
+        normalizeString(config?.kavita?.externalUrl) || normalizeString(config?.kavita?.baseUrl),
+    );
+    rendered = replaceTemplateToken(rendered, '{server_ip}', resolveServerIpPlaceholderValue(config));
+
+    if (mention && !normalizeString(template).includes('{user_mention}')) {
+        rendered = `${mention}\n\n${rendered}`;
+    }
+
+    return rendered.trim();
+};
+
+const createGuildMemberAddHandler = ({config, discord, logger, vault}) => async member => {
+    if (!member || member.user?.bot === true || typeof vault?.readSetting !== 'function') {
+        return;
+    }
+
+    let setting = null;
+    try {
+        setting = await vault.readSetting({key: ONBOARDING_SETTINGS_KEY});
+    } catch (error) {
+        logger.log(`[Portal] Warning: failed to load onboarding settings for guild join posts: ${error?.message ?? error}`);
+        return;
+    }
+
+    const template = normalizeString(setting?.template);
+    const channelId = normalizeString(setting?.channelId);
+    if (!template || !channelId) {
+        return;
+    }
+
+    const content = renderOnboardingMessage({template, member, config});
+    if (!content) {
+        return;
+    }
+
+    try {
+        await discord.sendChannelMessage(channelId, {content});
+    } catch (error) {
+        logger.log(
+            `[Portal] Warning: failed to send onboarding message to channel ${channelId}: ${error?.message ?? error}`,
+        );
+    }
+};
+
 /**
  * Starts Portal with optional env, dependency, and logger overrides.
  *
@@ -81,6 +171,7 @@ export const startPortal = async (overrides = {}) => {
     runtime.closeServer = null;
     runtime.discord = null;
     runtime.discordStatus = config.discord.enabled ? 'ok' : 'disabled';
+    runtime.chapterReleaseNotifier = null;
     runtime.presenceUpdater = null;
     runtime.recommendationNotifier = null;
     runtime.subscriptionNotifier = null;
@@ -152,6 +243,14 @@ export const startPortal = async (overrides = {}) => {
             messageQueueNamespace: config.redis.directMessageNamespace,
             messageQueueTtlSeconds: config.redis.ttlSeconds,
             directMessageHandler,
+            guildMemberAddHandler: createGuildMemberAddHandler({
+                config,
+                discord: {
+                    sendChannelMessage: (...args) => discord?.sendChannelMessage?.(...args),
+                },
+                logger,
+                vault,
+            }),
         });
         runtime.discord = discord;
 
@@ -215,6 +314,19 @@ export const startPortal = async (overrides = {}) => {
             });
             subscriptionNotifier.start();
             runtime.subscriptionNotifier = subscriptionNotifier;
+
+            const chapterReleaseNotifier = (dependencies.createChapterReleaseNotifier ?? createChapterReleaseNotifier)({
+                discordClient: discord,
+                vaultClient: vault,
+                ravenClient: raven,
+                kavitaClient: kavita,
+                kavitaBaseUrl: config.kavita?.externalUrl,
+                logger: {
+                    warn: errMSG,
+                },
+            });
+            chapterReleaseNotifier.start();
+            runtime.chapterReleaseNotifier = chapterReleaseNotifier;
         }
     } else {
         runtime.discord = null;
@@ -260,6 +372,9 @@ export const stopPortal = async () => {
     if (runtime.subscriptionNotifier) {
         runtime.subscriptionNotifier.stop();
     }
+    if (runtime.chapterReleaseNotifier) {
+        runtime.chapterReleaseNotifier.stop();
+    }
 
     if (runtime.discord) {
         runtime.discord.destroy();
@@ -267,6 +382,7 @@ export const stopPortal = async () => {
 
     runtime.server = null;
     runtime.closeServer = null;
+    runtime.chapterReleaseNotifier = null;
     runtime.discord = null;
     runtime.discordStatus = null;
     runtime.kavita = null;

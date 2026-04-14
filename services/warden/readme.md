@@ -25,8 +25,8 @@ exposes the management APIs that the rest of Noona uses.
   stay aligned with the live Discord access gate unless an admin intentionally overrides it
 - keeps the saved setup profile in `wardenm/noona-settings.json` under `NOONA_DATA_ROOT` and auto-migrates older
   duplicate snapshot files into that canonical location
-- keeps normal post-setup boot in minimal mode so Sage and Moon return first, while full ecosystem startup stays on the
-  explicit `bootFull()` / `startEcosystem()` lifecycle path
+- treats `noona-mongo`, `noona-redis`, `noona-vault`, `noona-sage`, and `noona-moon` as the core boot set, then
+  automatically resumes the saved managed lifecycle after setup when additional services were selected
 - still restores the full managed lifecycle automatically when setup is incomplete and installed managed services imply
   an interrupted install
 - normalizes older setup JSON uploads for Moon review without persisting them until an explicit save or install
@@ -41,9 +41,11 @@ exposes the management APIs that the rest of Noona uses.
   overrides so admins can repair Moon-facing routing without hand-editing containers
 - keeps runtime env changes in memory and in `warden/service-runtime-config.json` even when Vault-backed settings are
   still warming up during first boot
-- keeps service-config secrets redacted by default while still letting trusted Sage reuse the already-installed managed
-  Kavita API key during setup summary sync
+- keeps service-config secrets redacted by default while still letting trusted Sage read broadly and a matching managed
+  service read its own full config during startup restore
 - coordinates updates, restarts, and factory-reset behavior
+- keeps a longer default API request timeout for synchronous managed image updates so Moon can wait through Docker pulls
+  plus optional restarts
 - bootstraps managed host log folders so supported services can write logs to `NOONA_DATA_ROOT` without manual host-side
   permission prep
 - keeps Mongo and Redis on a private Docker data network, with Vault as the only managed bridge to that network
@@ -72,11 +74,11 @@ through Vault, including Portal's short-lived onboarding and Discord DM queue st
 
 `GET /health` reports `ready: false` until `warden.init()` finishes. During that window Moon and Sage may already be
 reachable, but first-run setup calls should treat Warden as still warming up rather than as fully initialized.
-After setup is complete, that normal init path still only restores Sage and Moon.
-Warden keeps `manualBootRequired` as an in-memory runtime flag for the current Warden session and only sets it when the
-saved selected ecosystem is waiting behind that minimal post-setup boot path.
-Moon's `/bootScreen` uses Warden's existing lifecycle ordering to start the saved ecosystem when an admin explicitly
-requests it, and later service outages or failed probes do not flip the system back into manual-boot mode.
+After setup is complete, that normal init path restores the core services first and then resumes any saved optional
+services automatically.
+Warden keeps `manualBootRequired` as an in-memory recovery flag for exceptional cases only.
+Moon's `/bootScreen` stays available as an explicit compatibility/recovery surface, and later service outages or failed
+probes do not flip the system back into manual-boot mode.
 
 For the supported install path, use [ServerAdmin.md](../../ServerAdmin.md) instead of treating Warden as a standalone
 app.

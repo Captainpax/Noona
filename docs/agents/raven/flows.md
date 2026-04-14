@@ -2,15 +2,12 @@
 
 ## Boot And Runtime Mode
 
-- [RavenApplication.java](../../../services/raven/src/main/java/com/paxkun/raven/RavenApplication.java) starts the
-  Spring Boot app for both the main server and one-shot worker processes.
-- [RavenRuntimeProperties.java](../../../services/raven/src/main/java/com/paxkun/raven/service/RavenRuntimeProperties.java)
-  decides whether Raven is the main server or a child worker.
-- Main-process Raven uses thread workers by default on non-Linux hosts and process workers on Linux hosts.
-- Child workers are launched by
-  [RavenWorkerLauncher.java](../../../services/raven/src/main/java/com/paxkun/raven/service/RavenWorkerLauncher.java)
-  and execute a single persisted task through
-  [RavenWorkerRunner.java](../../../services/raven/src/main/java/com/paxkun/raven/service/RavenWorkerRunner.java).
+- [RavenApplication.java](../../../services/raven/src/main/java/com/paxkun/raven/RavenApplication.java) starts a
+  single Spring Boot service process.
+- [DownloadService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/DownloadService.java) owns a
+  single in-process executor for downloads.
+- Effective download concurrency is intentionally `1`.
+  Raven runs one active download at a time and keeps the rest of the queue persisted and resumable.
 
 ## Search To Queue To Download
 
@@ -25,6 +22,12 @@
   "download this title from scratch" rather than "resume whatever stale queued chapter subset Raven still had".
 - Download execution and status persistence live in
   [DownloadService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/DownloadService.java).
+- Chapter execution is completeness-first now.
+  Raven retries source-page lookup, retries individual image fetches, and retries the whole chapter when a partial
+  page set lands.
+  A chapter only becomes complete when Raven saved every expected page into the archive.
+- Queue restore order is FIFO by `queuedAt`.
+  If multiple queued tasks survive a restart, Raven resumes the oldest queued work first.
 
 ## Task Persistence And Recovery
 
@@ -32,23 +35,30 @@
 - Raven also writes the current task snapshot to Redis key `raven:download:current-task`.
 - On boot, Raven restores queued, downloading, recovering, and interrupted tasks from Vault.
 - When multiple restorable tasks exist for the same title, Raven keeps the newest one and deletes older duplicates
-  before thread/process restore continues.
+  before queued restore continues.
 - Pause requests are persisted so Raven can cleanly stop after the current chapter and later resume the task.
-- Thread mode and process mode use different executors/supervisors, but both depend on the same persisted
-  `DownloadProgress` contract.
+- Restore and live execution both depend on the same persisted `DownloadProgress` contract.
 
 ## Library, Sync, And Import Flow
 
 - Raven stores title metadata in Vault collection `manga_library`.
 - [LibraryService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/LibraryService.java) updates
   title metadata, chapter indexes, file maps, and `downloadPath` whenever new work lands.
+- `GET /v1/library/title/{uuid}` now reconciles `downloadedChapterFiles`, `downloadedChapterNumbers`,
+  `chaptersDownloaded`, and `lastDownloaded` from the managed title folder before Raven returns the title payload.
 - Raven writes a `.noona` manifest beside managed title content so imports and restores can reconstruct the title.
-- `POST /v1/library/checkForNew` checks the full library for new or missing chapters.
-- `POST /v1/library/title/{uuid}/checkForNew` checks one title.
+- `POST /v1/library/checkForNew` and `POST /v1/library/title/{uuid}/checkForNew` now split planning from execution.
+  Raven fetches source chapters, computes the `new` and `missing` plan, returns that queued summary immediately, then
+  runs the actual chapter sync in the background on the existing single-thread executor.
+- Library-wide checks reserve one in-process run at a time so repeated requests do not stack duplicate planning passes.
 - `POST /v1/library/imports/check` scans managed folders for `.noona` manifests, imports missing titles, and can queue
   missing or new chapters afterward.
 - `POST /v1/library/title/{uuid}/volume-map` stores provider metadata and can auto-rename existing files to match the
   configured volume map.
+- `DELETE /v1/library/title/{uuid}` removes the managed title folder first, then soft-deletes the title record with
+  `deletedAt`.
+  Folder-delete failures are fatal to the request so Moon does not silently archive the title while leaving the files
+  behind.
 
 ## Kavita Sync Flow
 
@@ -57,6 +67,8 @@
   ensure the right Kavita library exists for the title type.
 - Raven prefers Portal-backed Kavita helpers when `PORTAL_BASE_URL` is configured.
 - If Portal is unavailable, Raven can talk to Kavita directly using `KAVITA_BASE_URL` and `KAVITA_API_KEY`.
+- When a scan races a just-created library, Raven clears its local library cache, re-runs the ensure step once, and
+  retries the scan lookup before it gives up or falls back.
 - Import checks and title syncs request Kavita scans after Raven writes or repairs content.
 
 ## VPN Rotation Flow
@@ -77,8 +89,8 @@
 - Auto-connect and manual rotation both use the same maintenance-pause flow:
   pause active downloads, wait for in-flight work to drain, reconnect OpenVPN, restore preserved local routes, then
   resume only the titles paused by that VPN transition.
-- In process-worker mode, Raven takes a mutable snapshot of the persisted active-task list before sorting it for the
-  maintenance-pause pass, so an empty immutable Vault fallback does not abort rotate or auto-connect.
+- Raven takes a mutable snapshot of the persisted active-task list before sorting it for the maintenance-pause pass, so
+  an empty immutable Vault fallback does not abort rotate or auto-connect.
 - A queued disable does not clear `onlyDownloadWhenVpnOn`.
   Raven still reads that gate separately when deciding whether queued downloads should wait for a VPN connection.
 - Stage-specific failures are recorded at the point they happen.
@@ -97,9 +109,10 @@
 
 - `GET /v1/debug` and `POST /v1/debug` toggle the `LoggerService` debug flag.
 - `GET /v1/download/status/summary` blends download progress with library-check activity so Moon can show a task-based
-  current state instead of raw worker internals.
+  current state instead of worker or process internals.
 - The summary payload now also includes `vpn` runtime details from `VPNServices` so Moon can explain queued tasks that
   are blocked on VPN startup or failure.
+- The summary payload also exposes the global `overallSpeedLimitKbps` value instead of per-worker rate-limit arrays.
 - `DownloadService` also fresh-reads VPN settings for queue gating checks, so disabling `onlyDownloadWhenVpnOn` or
   otherwise removing the wait condition releases queued work without waiting for the old 5-second VPN settings cache.
 - If the summary shape changes, update controller tests and any Moon/Sage code that renders Raven state.

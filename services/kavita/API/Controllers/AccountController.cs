@@ -50,6 +50,7 @@ public class AccountController : BaseApiController
     // Hardcoded to avoid localization multiple enumeration: https://github.com/Kareadita/Kavita/issues/2829
     private const string BadCredentialsMessage = "Your credentials are not correct";
     private const string NoonaPasswordDisabledMessage = "Password authentication is disabled. Use Log in with Noona.";
+    private const string NoonaManagedFirstAdminMessage = "Noona manages the first Kavita admin. Finish setup in Moon or let Warden complete the managed bootstrap.";
 
     private readonly UserManager<AppUser> _userManager;
     private readonly SignInManager<AppUser> _signInManager;
@@ -168,12 +169,44 @@ public class AccountController : BaseApiController
             : BuildAbsoluteHttpUrl(Request.Scheme, Request.Host.Host, defaultMoonPort);
     }
 
+    private bool IsNoonaLoginEnabled()
+    {
+        return !string.IsNullOrEmpty(GetNoonaMoonBaseUrl());
+    }
+
     private bool IsNoonaSocialLoginOnlyEnabled()
     {
-        var moonBaseUrl = GetNoonaMoonBaseUrl();
-        if (string.IsNullOrEmpty(moonBaseUrl)) return false;
+        if (!IsNoonaLoginEnabled()) return false;
 
         return IsTruthyFlag(Environment.GetEnvironmentVariable("NOONA_SOCIAL_LOGIN_ONLY"));
+    }
+
+    private static string NormalizeNoonaBootstrapField(string? value)
+    {
+        return value?.Trim() ?? string.Empty;
+    }
+
+    private static string NormalizeNoonaBootstrapPassword(string? value)
+    {
+        return value ?? string.Empty;
+    }
+
+    private bool MatchesConfiguredNoonaBootstrapRegistration(RegisterDto registerDto)
+    {
+        var configuredUsername = NormalizeNoonaBootstrapField(Environment.GetEnvironmentVariable("KAVITA_ADMIN_USERNAME"));
+        var configuredEmail = NormalizeNoonaBootstrapField(Environment.GetEnvironmentVariable("KAVITA_ADMIN_EMAIL"));
+        var configuredPassword = NormalizeNoonaBootstrapPassword(Environment.GetEnvironmentVariable("KAVITA_ADMIN_PASSWORD"));
+
+        if (string.IsNullOrEmpty(configuredUsername)
+            || string.IsNullOrEmpty(configuredEmail)
+            || string.IsNullOrEmpty(configuredPassword))
+        {
+            return false;
+        }
+
+        return string.Equals(NormalizeNoonaBootstrapField(registerDto.Username), configuredUsername, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(NormalizeNoonaBootstrapField(registerDto.Email), configuredEmail, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(NormalizeNoonaBootstrapPassword(registerDto.Password), configuredPassword, StringComparison.Ordinal);
     }
 
     private static string GetNoonaPortalBaseUrl()
@@ -284,7 +317,7 @@ public class AccountController : BaseApiController
     public ActionResult<NoonaLoginConfigDto> GetNoonaConfig()
     {
         var moonBaseUrl = GetNoonaMoonBaseUrl();
-        var enabled = !string.IsNullOrEmpty(moonBaseUrl);
+        var enabled = IsNoonaLoginEnabled();
         return Ok(new NoonaLoginConfigDto
         {
             Enabled = enabled,
@@ -369,6 +402,14 @@ public class AccountController : BaseApiController
     [HttpPost("register")]
     public async Task<ActionResult<UserDto>> RegisterFirstUser(RegisterDto registerDto)
     {
+        if (IsNoonaLoginEnabled() && !MatchesConfiguredNoonaBootstrapRegistration(registerDto))
+        {
+            _logger.LogWarning(
+                "Rejected direct first-user registration for {UserName} because Noona-managed login is enabled",
+                registerDto.Username);
+            return StatusCode((int)HttpStatusCode.Forbidden, NoonaManagedFirstAdminMessage);
+        }
+
         var admins = await _userManager.GetUsersInRoleAsync("Admin");
         if (admins.Count > 0) return BadRequest(await _localizationService.Get("en", "denied"));
 

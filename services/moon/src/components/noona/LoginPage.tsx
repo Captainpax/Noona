@@ -3,7 +3,7 @@
 import {useEffect, useState} from "react";
 import {useRouter, useSearchParams} from "next/navigation";
 import {Badge, Button, Card, Column, dev, Heading, Row, Spinner, Text} from "@once-ui-system/core";
-import {buildBootScreenHref, normalizeSetupStatus} from "./setupStatus.mjs";
+import {normalizeSetupStatus} from "./setupStatus.mjs";
 
 type SetupStatus = {
     completed?: boolean;
@@ -52,26 +52,6 @@ const normalizeMoonReturnTarget = (value: unknown, currentOrigin: string, fallba
         return fallback;
     }
 };
-const normalizeBootReturnTarget = (value: unknown, currentOrigin: string, fallback = "/"): string => {
-    const normalized = normalizeMoonReturnTarget(value, currentOrigin, fallback);
-    if (normalized.startsWith("/")) {
-        return normalized;
-    }
-
-    const absoluteTarget = normalizeAbsoluteHttpUrl(normalized);
-    if (!absoluteTarget || !currentOrigin) {
-        return fallback;
-    }
-
-    try {
-        const parsed = new URL(absoluteTarget);
-        return parsed.origin === currentOrigin
-            ? `${parsed.pathname}${parsed.search}${parsed.hash}`
-            : fallback;
-    } catch {
-        return fallback;
-    }
-};
 const navigateToReturnTarget = (router: { replace: (href: string) => void }, target: string) => {
     if (target.startsWith("/")) {
         window.location.replace(new URL(target, window.location.origin).toString());
@@ -100,12 +80,10 @@ export function LoginPage() {
             try {
                 const currentOrigin = window.location.origin;
                 const returnTo = normalizeMoonReturnTarget(searchParams.get("returnTo"), currentOrigin, "/");
-                const bootReturnTo = normalizeBootReturnTarget(searchParams.get("returnTo"), currentOrigin, "/");
                 dev.info("[NoonaLogin] Page check started", {returnTo, currentOrigin});
                 const setupRes = await fetch("/api/noona/setup/status", {cache: "no-store"});
                 const setupJson = normalizeSetupStatus(await setupRes.json().catch(() => null)) as SetupStatus;
                 const setupCompleted = setupJson?.completed === true;
-                const manualBootRequired = setupJson?.manualBootRequired === true;
                 dev.debug("[NoonaLogin] Setup status fetched", {setupCompleted, status: setupRes.status});
 
                 const authRes = await fetch("/api/noona/auth/status", {cache: "no-store"});
@@ -114,17 +92,13 @@ export function LoginPage() {
                     dev.info("[NoonaLogin] Existing session found; redirecting", {
                         destination: !setupCompleted
                             ? "/setupwizard/summary"
-                            : manualBootRequired
-                                ? buildBootScreenHref(bootReturnTo)
-                                : returnTo,
+                            : returnTo,
                     });
                     navigateToReturnTarget(
                         router,
                         !setupCompleted
                             ? "/setupwizard/summary"
-                            : manualBootRequired
-                                ? buildBootScreenHref(bootReturnTo)
-                                : returnTo,
+                            : returnTo,
                     );
                     return;
                 }
@@ -133,12 +107,6 @@ export function LoginPage() {
                 if (!setupCompleted) {
                     dev.info("[NoonaLogin] Setup incomplete; redirecting to setup wizard");
                     router.replace("/setupwizard");
-                    return;
-                }
-
-                if (manualBootRequired) {
-                    dev.info("[NoonaLogin] Manual boot required; redirecting to boot screen");
-                    router.replace(buildBootScreenHref(bootReturnTo));
                     return;
                 }
 

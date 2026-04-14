@@ -5,7 +5,7 @@
  * - clients/ravenClient.mjs
  * - discord/client.mjs
  * - tests/directMessageRouter.test.mjs
- * Times this file has been edited: 1
+ * Times this file has been edited: 2
  */
 
 import {errMSG} from '../../../utilities/etc/logger.mjs';
@@ -140,7 +140,7 @@ const formatValidationMessage = (errors = []) => {
         'Use `downloadall type:manga nsfw:false titlegroup:a`',
         'Supported `type` values: manga, manhwa, manhua, oel.',
         '`nsfw` accepts true/false, yes/no, or 1/0.',
-        '`titlegroup` is the title prefix Raven should match.',
+        '`titlegroup` is the title prefix Noona should match.',
     ];
     if (errors.length > 0) {
         lines.push('', `Problems: ${errors.join(' ')}`);
@@ -166,7 +166,7 @@ export const formatBulkQueueSummary = (result = {}) => {
     const filters = result?.filters && typeof result.filters === 'object' ? result.filters : {};
     const normalizedNsfw = normalizeBoolean(filters.nsfw);
     const lines = [
-        'Raven bulk queue finished.',
+        'Noona bulk queue finished.',
         `Status: ${normalizeString(result?.status) || 'unknown'}`,
         `Message: ${normalizeString(result?.message) || 'No summary returned.'}`,
         `Filters: type=${normalizeString(filters.type) || 'unknown'}, nsfw=${normalizedNsfw == null ? 'unknown' : String(normalizedNsfw)}, titlegroup=${normalizeString(filters.titlePrefix) || 'unknown'}`,
@@ -222,13 +222,13 @@ export const createDirectMessageHandler = ({
         }
 
         if (typeof raven?.bulkQueueDownload !== 'function') {
-            await sendReply(message, 'Raven bulk queue is not available right now.');
+            await sendReply(message, 'Noona bulk queue is not available right now.');
             return true;
         }
 
         await sendReply(
             message,
-            `Queueing Raven bulk download for type=${parsed.filters.type}, nsfw=${parsed.filters.nsfw}, titlegroup=${parsed.filters.titlePrefix}...`,
+            `Queueing Noona bulk download for type=${parsed.filters.type}, nsfw=${parsed.filters.nsfw}, titlegroup=${parsed.filters.titlePrefix}...`,
         );
 
         try {
@@ -241,7 +241,7 @@ export const createDirectMessageHandler = ({
         } catch (error) {
             const messageText = error instanceof Error ? error.message : String(error);
             errMSG(`[Portal/Discord] downloadall DM failed: ${messageText}`);
-            await sendReply(message, `Raven bulk queue failed: ${messageText}`);
+            await sendReply(message, `Noona bulk queue failed: ${messageText}`);
         }
 
         return true;

@@ -35,9 +35,9 @@ control-plane HTTP API for the stack.
 - Boot selection is persistence-first, Docker-second.
   Warden prefers the saved setup snapshot when deciding what the managed lifecycle should be, then falls back to
   installed-container detection.
-- Completed setup does not imply a full automatic boot.
-  Normal `init()` stays in minimal mode after setup and only restores the full lifecycle when setup is still incomplete
-  or `DEBUG=super` is active.
+- Completed setup restores the core boot set automatically.
+  Normal `init()` brings back Mongo, Redis, Vault, Sage, and Moon first, then resumes the saved optional lifecycle
+  when selection state or installed-container detection says more services should be running.
 - Critical control-plane state is mirrored locally on disk.
   Even when Vault-backed settings are available, Warden still writes local snapshot files under `NOONA_DATA_ROOT`.
 - Service catalog state has two meanings now.
@@ -81,6 +81,8 @@ control-plane HTTP API for the stack.
 - Managed Kavita provisioning uses Sage's client:
   [../../../services/sage/clients/managedKavitaSetupClient.mjs](../../../services/sage/clients/managedKavitaSetupClient.mjs)
 - Moon and Sage depend on Warden's setup snapshot and config routes.
+- Managed Moon, Vault, Portal, Raven, Kavita, and Komf now also depend on Warden's self-config route during startup,
+  but only for their own runtime env restore.
 - Portal depends on Warden's service list, install progress, and service logs, but should remain read-only.
 
 ## Update Checklist

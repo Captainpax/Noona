@@ -2,7 +2,7 @@
  * @fileoverview Covers recommendation DM delivery, timeline sync, and polling behavior.
  * Related files:
  * - discord/recommendationNotifier.mjs
- * Times this file has been edited: 8
+ * Times this file has been edited: 9
  */
 
 import assert from 'node:assert/strict';
@@ -84,6 +84,7 @@ test('recommendation notifier DMs users when recommendations are approved and st
             getLibrary: async () => [],
         },
         kavitaClient: {},
+        moonBaseUrl: 'http://moon.example:3000',
         pollMs: 60000,
         logger: {},
     });
@@ -95,11 +96,15 @@ test('recommendation notifier DMs users when recommendations are approved and st
     assert.equal(messages.length, 1);
     assert.equal(messages[0].userId, 'discord-user-1');
     assert.match(messages[0].payload.content, /approved by \*\*CaptainPax\*\*/i);
+    assert.match(
+        messages[0].payload.content,
+        /You can view your request here: http:\/\/moon\.example:3000\/myrecommendations\/rec-approved-1/i,
+    );
     assert.ok(typeof recommendations[0]?.notifications?.approvalDmSentAt === 'string');
     assert.equal(recommendations[0]?.notifications?.approvalDmMessageId, 'dm-1');
 });
 
-test('recommendation notifier DMs completion with Kavita link once title is available', async () => {
+test('recommendation notifier DMs completion with a Kavita link once title is available', async () => {
     const recommendations = [
         {
             _id: 'rec-complete-1',
@@ -164,8 +169,8 @@ test('recommendation notifier DMs completion with Kavita link once title is avai
 
     assert.equal(messages.length, 1);
     assert.equal(messages[0].userId, 'discord-user-2');
-    assert.match(messages[0].payload.content, /now available in Kavita/i);
-    assert.match(messages[0].payload.content, /Open in Kavita: http:\/\/noona-kavita:5000\/library\/4\/series\/17/i);
+    assert.match(messages[0].payload.content, /ready in Noona/i);
+    assert.match(messages[0].payload.content, /Open in Noona: http:\/\/noona-kavita:5000\/library\/4\/series\/17/i);
     assert.ok(typeof recommendations[0]?.notifications?.completionDmSentAt === 'string');
     assert.equal(recommendations[0]?.notifications?.completionDmMessageId, 'dm-1');
     assert.equal(recommendations[0]?.notifications?.completionKavitaUrl, 'http://noona-kavita:5000/library/4/series/17');
@@ -523,11 +528,11 @@ test('recommendation notifier prefers configured external Kavita URL for complet
     notifier.stop();
 
     assert.equal(messages.length, 1);
-    assert.match(messages[0].payload.content, /Open in Kavita: https:\/\/kavita\.example\.com\/library\/4\/series\/17/i);
+    assert.match(messages[0].payload.content, /Open in Noona: https:\/\/kavita\.example\.com\/library\/4\/series\/17/i);
     assert.equal(recommendations[0]?.notifications?.completionKavitaUrl, 'https://kavita.example.com/library/4/series/17');
 });
 
-test('recommendation notifier still DMs when Raven finishes downloading but Kavita has no link yet', async () => {
+test('recommendation notifier waits to DM completion until the title is available in Noona', async () => {
     const recommendations = [
         {
             _id: 'rec-complete-3',
@@ -544,6 +549,8 @@ test('recommendation notifier still DMs when Raven finishes downloading but Kavi
         },
     ];
     const messages = [];
+    let libraryReady = false;
+    let kavitaReady = false;
 
     const notifier = createRecommendationNotifier({
         discordClient: {
@@ -565,7 +572,14 @@ test('recommendation notifier still DMs when Raven finishes downloading but Kavi
             },
         },
         ravenClient: {
-            getLibrary: async () => [],
+            getLibrary: async () => libraryReady
+                ? [
+                    {
+                        title: 'Omniscient Reader',
+                        sourceUrl: 'https://asura.example/omniscient',
+                    },
+                ]
+                : [],
             getDownloadStatus: async () => [],
             getDownloadHistory: async () => [
                 {
@@ -581,7 +595,15 @@ test('recommendation notifier still DMs when Raven finishes downloading but Kavi
         kavitaClient: {
             getBaseUrl: () => 'http://noona-kavita:5000/',
             searchTitles: async () => ({
-                series: [],
+                series: kavitaReady
+                    ? [
+                        {
+                            libraryId: 4,
+                            seriesId: 21,
+                            name: 'Omniscient Reader',
+                        },
+                    ]
+                    : [],
             }),
         },
         moonBaseUrl: 'http://moon.example:3000',
@@ -591,19 +613,31 @@ test('recommendation notifier still DMs when Raven finishes downloading but Kavi
 
     notifier.start();
     await notifier.refresh();
+    assert.equal(messages.length, 0);
+    assert.ok(Array.isArray(recommendations[0]?.timeline));
+    assert.ok(recommendations[0].timeline.some((event) => event?.type === 'download-completed'));
+    assert.equal(recommendations[0]?.notifications?.completionDmSentAt, undefined);
+    assert.equal(recommendations[0]?.notifications?.completionMoonUrl, undefined);
+    assert.equal(recommendations[0]?.completedAt, undefined);
+
+    libraryReady = true;
+    await notifier.refresh();
+    assert.equal(messages.length, 0);
+    assert.equal(recommendations[0]?.notifications?.completionDmSentAt, undefined);
+    assert.equal(recommendations[0]?.completedAt, undefined);
+
+    kavitaReady = true;
+    await notifier.refresh();
     notifier.stop();
 
     assert.equal(messages.length, 1);
     assert.equal(messages[0].userId, 'discord-user-2');
-    assert.match(messages[0].payload.content, /Raven finished downloading your recommendation/i);
-    assert.match(messages[0].payload.content, /Kavita may still be indexing it/i);
-    assert.match(messages[0].payload.content, /Track it in Moon: http:\/\/moon\.example:3000\/myrecommendations\/rec-complete-3/i);
-    assert.ok(Array.isArray(recommendations[0]?.timeline));
-    assert.ok(recommendations[0].timeline.some((event) => event?.type === 'download-completed'));
+    assert.match(messages[0].payload.content, /ready in Noona/i);
+    assert.match(messages[0].payload.content, /Open in Noona: http:\/\/noona-kavita:5000\/library\/4\/series\/21/i);
     assert.ok(typeof recommendations[0]?.notifications?.completionDmSentAt === 'string');
     assert.equal(recommendations[0]?.notifications?.completionDmMessageId, 'dm-1');
-    assert.equal(recommendations[0]?.notifications?.completionKavitaUrl, null);
-    assert.equal(recommendations[0]?.notifications?.completionMoonUrl, 'http://moon.example:3000/myrecommendations/rec-complete-3');
+    assert.equal(recommendations[0]?.notifications?.completionKavitaUrl, 'http://noona-kavita:5000/library/4/series/21');
+    assert.equal(recommendations[0]?.notifications?.completionMoonUrl, null);
     assert.ok(typeof recommendations[0]?.completedAt === 'string');
 });
 
@@ -676,8 +710,8 @@ test('recommendation notifier DMs users when admins add timeline comments and st
 
     assert.equal(messages.length, 1);
     assert.equal(messages[0].userId, 'discord-user-3');
-    assert.match(messages[0].payload.content, /new admin comment/i);
-    assert.match(messages[0].payload.content, /Open in Moon: http:\/\/moon\.example:3000\/myrecommendations\/rec-comment-1/i);
+    assert.match(messages[0].payload.content, /new admin note/i);
+    assert.match(messages[0].payload.content, /View in Noona: http:\/\/moon\.example:3000\/myrecommendations\/rec-comment-1/i);
     assert.ok(typeof recommendations[0]?.timeline?.[0]?.notifications?.adminCommentDmSentAt === 'string');
     assert.equal(recommendations[0]?.timeline?.[0]?.notifications?.adminCommentDmMessageId, 'dm-1');
 });
@@ -757,8 +791,9 @@ test('recommendation notifier appends Raven download timeline events for approve
         timeline.map((event) => event?.type),
         ['download-started', 'download-progress', 'download-completed'],
     );
-    assert.equal(timeline[0]?.actor?.username, 'Raven');
-    assert.match(timeline[0]?.body ?? '', /started downloading 12 chapters/i);
-    assert.match(timeline[1]?.body ?? '', /downloaded 6 of 12 chapters so far/i);
-    assert.match(timeline[2]?.body ?? '', /finished downloading 12 chapters/i);
+    assert.equal(timeline[0]?.actor?.username, 'Noona');
+    assert.match(timeline[0]?.body ?? '', /Noona started downloading 12 chapters for this request/i);
+    assert.match(timeline[1]?.body ?? '', /Noona downloaded 6 of 12 chapters for this request so far/i);
+    assert.match(timeline[2]?.body ?? '', /Noona finished downloading 12 chapters for this request/i);
+    assert.match(timeline[2]?.body ?? '', /ready in your library/i);
 });

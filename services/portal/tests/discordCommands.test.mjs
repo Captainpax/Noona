@@ -3,7 +3,7 @@
  * Related files:
  * - commands/index.mjs
  * - commands/recommendCommand.mjs
- * Times this file has been edited: 12
+ * Times this file has been edited: 13
  */
 
 import assert from 'node:assert/strict';
@@ -184,18 +184,18 @@ test('scan command definition requires an autocompleted library option', () => {
     const command = commands.get('scan');
 
     assert.ok(command, 'Expected scan command to be registered.');
-    assert.equal(command.definition.description, 'Trigger a Kavita scan for a library.');
+    assert.equal(command.definition.description, 'Refresh a Noona library.');
     assert.deepEqual(command.definition.options, [
         {
             name: 'library',
-            description: 'Library to scan in Kavita.',
+            description: 'Library to refresh in Noona.',
             type: 3,
             required: true,
             autocomplete: true,
         },
         {
             name: 'force',
-            description: 'Force a full scan for the selected library.',
+            description: 'Force a full refresh for the selected library.',
             type: 5,
             required: false,
         },
@@ -246,7 +246,7 @@ test('scan command queues a Kavita library scan from an autocompleted id', async
     assert.deepEqual(calls, [{libraryId: 12, options: {force: true}}]);
     assert.equal(edits.length, 1);
     assert.equal(edits[0].ephemeral, undefined);
-    assert.match(edits[0].content, /Queued a forced Kavita scan for \*\*Light Novels\*\*/i);
+    assert.match(edits[0].content, /Queued a forced Noona library refresh for \*\*Light Novels\*\*/i);
 });
 
 test('scan command resolves a typed library name and reports available libraries when missing', async () => {
@@ -271,16 +271,61 @@ test('scan command resolves a typed library name and reports available libraries
     assert.match(edits[0].content, /Available libraries: Manga, Light Novels/);
 });
 
+test('scan command reports a friendly error when Kavita library lookup fails', async () => {
+    const commands = createPortalSlashCommands({
+        kavita: {
+            fetchLibraries: async () => {
+                const error = new Error('Kavita request failed with status 401: Unauthorized');
+                error.status = 401;
+                throw error;
+            },
+            scanLibrary: async () => null,
+        },
+    });
+    const command = commands.get('scan');
+    const {interaction, edits} = createScanInteraction({library: 'Manga'});
+
+    await command.execute(interaction);
+
+    assert.equal(edits.length, 1);
+    assert.match(edits[0].content, /KAVITA_API_KEY/i);
+    assert.match(edits[0].content, /valid/i);
+});
+
+test('scan command reports admin-key guidance when Kavita denies the scan request', async () => {
+    const commands = createPortalSlashCommands({
+        kavita: {
+            fetchLibraries: async () => [
+                {id: 11, name: 'Manga'},
+            ],
+            scanLibrary: async () => {
+                const error = new Error('Kavita request failed with status 403: Forbidden');
+                error.status = 403;
+                throw error;
+            },
+        },
+    });
+    const command = commands.get('scan');
+    const {interaction, edits} = createScanInteraction({library: '11'});
+
+    await command.execute(interaction);
+
+    assert.equal(edits.length, 1);
+    assert.match(edits[0].content, /Manga/);
+    assert.match(edits[0].content, /admin-capable Kavita account/i);
+    assert.match(edits[0].content, /KAVITA_API_KEY/i);
+});
+
 test('search command definition requires a title option', () => {
     const commands = createPortalSlashCommands({kavita: {searchTitles: async () => ({series: []})}});
     const command = commands.get('search');
 
     assert.ok(command, 'Expected search command to be registered.');
-    assert.equal(command.definition.description, 'Search Kavita for matching series titles.');
+    assert.equal(command.definition.description, 'Search Noona for matching series titles.');
     assert.deepEqual(command.definition.options, [
         {
             name: 'title',
-            description: 'Series title to search for in Kavita.',
+            description: 'Series title to search for in Noona.',
             type: 3,
             required: true,
         },
@@ -302,7 +347,7 @@ test('search command returns friendly response when Kavita title is missing', as
 
     assert.equal(edits.length, 1);
     assert.equal(edits[0].ephemeral, undefined);
-    assert.match(edits[0].content, /No Kavita titles found/i);
+    assert.match(edits[0].content, /No Noona titles found/i);
 });
 
 test('search command queries Kavita and formats title matches', async () => {
@@ -337,7 +382,7 @@ test('search command queries Kavita and formats title matches', async () => {
     assert.deepEqual(calls, ['one piece']);
     assert.equal(edits.length, 1);
     assert.equal(edits[0].ephemeral, undefined);
-    assert.match(edits[0].content, /Found 2 Kavita title matches for "one piece"/i);
+    assert.match(edits[0].content, /Found 2 Noona title matches for "one piece"/i);
     assert.match(edits[0].content, /1\. One Piece \| library: Shonen Jump \| aka: ワンピース/);
     assert.match(edits[0].content, /2\. Frieren: Beyond Journey's End \| library: Fantasy/);
 });
@@ -365,11 +410,11 @@ test('subscribe command definition requires a title option', () => {
     const command = commands.get('subscribe');
 
     assert.ok(command, 'Expected subscribe command to be registered.');
-    assert.equal(command.definition.description, 'Subscribe to a title and get DMs for newly downloaded chapters.');
+    assert.equal(command.definition.description, 'Subscribe to a title and get DMs when Noona finishes new chapters.');
     assert.deepEqual(command.definition.options, [
         {
             name: 'title',
-            description: 'Title to subscribe to for chapter download DMs.',
+            description: 'Title to subscribe to for Noona chapter updates.',
             type: 3,
             required: true,
         },
@@ -561,11 +606,11 @@ test('recommend command definition requires a title option', () => {
     const command = commands.get('recommend');
 
     assert.ok(command, 'Expected recommend command to be registered.');
-    assert.equal(command.definition.description, 'Recommend a new title from Raven search results.');
+    assert.equal(command.definition.description, 'Recommend a new title for Noona.');
     assert.deepEqual(command.definition.options, [
         {
             name: 'title',
-            description: 'Title to search for in Raven before saving a recommendation.',
+            description: 'Title to search before saving your recommendation.',
             type: 3,
             required: true,
         },
@@ -631,7 +676,7 @@ test('recommend command searches Raven and stores the selected recommendation in
 
     assert.deepEqual(ravenCalls, ['Solo Leveling']);
     assert.equal(edits.length, 1);
-    assert.match(edits[0].content, /Select the Raven match to recommend/i);
+    assert.match(edits[0].content, /Select the best match for/i);
     assert.equal(edits[0].components.length, 2);
 
     const [selectionRow] = edits[0].components.map(row => row.toJSON());
@@ -727,7 +772,7 @@ test('recommend command saves an unmatched recommendation when the user cannot f
     assert.equal(button.edits.length, 1);
     assert.match(button.edits[0].content, /expand our content reach/i);
     assert.equal(button.dms.length, 1);
-    assert.match(button.dms[0].content, /couldn't find a Raven source/i);
+    assert.match(button.dms[0].content, /couldn't find a source/i);
 });
 
 test('recommend command lets users save titles for later when Raven returns no matches', async () => {
@@ -752,7 +797,7 @@ test('recommend command lets users save titles for later when Raven returns no m
     await command.execute(interaction);
 
     assert.equal(edits.length, 1);
-    assert.match(edits[0].content, /No Raven titles were found/i);
+    assert.match(edits[0].content, /No matching titles were found/i);
     const [selectionRow] = edits[0].components.map(row => row.toJSON());
     assert.equal(selectionRow.components.length, 1);
     assert.equal(selectionRow.components[0].label, "Can't find your title?");
@@ -796,7 +841,7 @@ test('recommend command initial DM includes a Moon myrecommendations link when M
     assert.equal(button.dms.length, 1);
     assert.match(
         button.dms[0].content,
-        /Track it in Moon: http:\/\/moon\.example:3000\/myrecommendations\/69ab9c2b86235ade34fee0c4/i,
+        /View in Noona: http:\/\/moon\.example:3000\/myrecommendations\/69ab9c2b86235ade34fee0c4/i,
     );
 });
 
@@ -853,8 +898,8 @@ test('recommend command reports existing library titles and returns a Kavita lin
     assert.equal(storedRecommendations.length, 0);
     assert.deepEqual(kavitaSearchCalls, ['Solo Leveling']);
     assert.equal(button.edits.length, 1);
-    assert.match(button.edits[0].content, /\*\*Solo Leveling\*\* is already on this server/i);
-    assert.match(button.edits[0].content, /Open in Kavita: https:\/\/kavita\.example\/library\/3\/series\/12/i);
+    assert.match(button.edits[0].content, /\*\*Solo Leveling\*\* is already available in Noona/i);
+    assert.match(button.edits[0].content, /Open in Noona: https:\/\/kavita\.example\/library\/3\/series\/12/i);
     assert.deepEqual(button.edits[0].components, []);
 });
 
@@ -903,7 +948,7 @@ test('recommend command prefers configured external Kavita URL for existing-titl
     await command.handleComponent(button.interaction);
 
     assert.equal(button.edits.length, 1);
-    assert.match(button.edits[0].content, /Open in Kavita: https:\/\/kavita\.example\.com\/library\/3\/series\/12/i);
+    assert.match(button.edits[0].content, /Open in Noona: https:\/\/kavita\.example\.com\/library\/3\/series\/12/i);
 });
 
 test('recommend command cancels pending selections without writing to Vault', async () => {

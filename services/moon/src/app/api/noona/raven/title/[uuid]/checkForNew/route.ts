@@ -13,10 +13,11 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ u
     }
 
     try {
+        const timeout = {timeoutMs: 60_000} as const;
         const {status, payload} = await sageJson(`/api/raven/title/${encodeURIComponent(uuid)}/checkForNew`, {
             method: "POST",
             headers: await withNoonaAuthHeaders(),
-        });
+        }, timeout);
         return NextResponse.json(payload, {status});
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

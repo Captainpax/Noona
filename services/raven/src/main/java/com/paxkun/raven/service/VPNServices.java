@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/settings/SettingsService.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnLoginTestResult.java
  * - src/main/java/com/paxkun/raven/service/vpn/VpnRegionOption.java
- * Times this file has been edited: 11
+ * Times this file has been edited: 12
  */
 package com.paxkun.raven.service;
 
@@ -67,8 +67,6 @@ public class VPNServices {
     private final SettingsService settingsService;
     private final DownloadService downloadService;
     private final LoggerService logger;
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private RavenRuntimeProperties runtimeProperties = new RavenRuntimeProperties();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor((runnable) -> {
         Thread thread = new Thread(runnable);
         thread.setName("raven-vpn-scheduler");
@@ -108,10 +106,6 @@ public class VPNServices {
 
     @PostConstruct
     public void start() {
-        if (runtimeProperties != null && runtimeProperties.isWorkerMode()) {
-            return;
-        }
-
         scheduleTickLoop();
     }
 

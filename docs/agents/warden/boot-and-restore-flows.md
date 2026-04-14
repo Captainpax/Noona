@@ -4,7 +4,7 @@
 
 - `createWarden.mjs` derives `BOOT_MODE`, `DEBUG`, and `SUPER_MODE` from env.
 - Minimal services are fixed to:
-  `noona-sage`, `noona-moon`
+  `noona-mongo`, `noona-redis`, `noona-vault`, `noona-sage`, `noona-moon`
 - Required core data services are fixed to:
   `noona-mongo`, `noona-redis`, `noona-vault`
 - Managed network placement is fixed to:
@@ -16,22 +16,23 @@
 
 ## `init()` Boot Decision
 
-`api.init()` in `createWarden.mjs` decides whether to boot minimal or full:
+`api.init()` in `createWarden.mjs` decides whether to boot the core set or the full saved lifecycle:
 
 1. ensure Docker connectivity
 2. ensure the Docker control and data networks exist
 3. attach the Warden container to the control network
 4. ask whether setup is completed
-5. if not completed, check whether installed managed services imply a restore path
-6. boot full only when `DEBUG=super` or an incomplete setup needs restore
-7. otherwise boot minimal, including the normal post-setup path
+5. if setup is complete and the persisted selection is `selected`, restore the full saved lifecycle automatically
+6. otherwise check whether installed managed services imply a restore path beyond the core set
+7. boot the full saved lifecycle only when `DEBUG=super` or saved/detected services require it
+8. otherwise boot the core set
 
-That post-setup behavior is intentional.
-After setup is complete, `init()` should only restore `noona-sage` and `noona-moon`.
-Manual full-stack startup stays on `bootFull()` / `startEcosystem()`, and Moon's `/bootScreen` uses those existing
-lifecycle helpers instead of creating a second startup path.
-Warden also owns the runtime-only `manualBootRequired` flag that tells Moon and Sage whether that post-setup minimal
-boot still needs an explicit full-stack start for the current Warden session.
+After setup is complete, `init()` should bring back Mongo, Redis, Vault, Sage, and Moon automatically.
+Additional selected services should resume without routing the normal restart path through Moon's `/bootScreen`.
+Manual full-stack startup still stays on `bootFull()` / `startEcosystem()`, and Moon's `/bootScreen` remains the
+compatibility/recovery surface instead of the default post-setup handoff.
+Warden also owns the runtime-only `manualBootRequired` flag, but that should now be exceptional rather than the normal
+completed-install state.
 
 Containerized attach behavior is now strict:
 
@@ -71,6 +72,9 @@ cold-start races without treating the process as fully ready too early.
 ## Managed Kavita During Boot
 
 - Boot and install flows treat `noona-kavita` specially.
+- Warden injects `NOONA_BOOTSTRAP_ADMIN_ON_START=true` as a managed default for `noona-kavita`.
+  Treat that flag as Warden-owned even if service-config round-trips include it; blank or unchanged values are a
+  no-op, not a user-editable toggle.
 - After managed Kavita starts, Warden can provision or recover its API key and inject that into dependent services such
   as Portal and Komf.
 - During restore boot, Warden prefers validated existing keys first:
@@ -98,8 +102,8 @@ Warden determines the managed lifecycle set in this order:
 
 Selection states:
 
-- `minimal`: boot only the minimal services
-- `selected`: boot required core services + minimal services + the selected managed services
+- `minimal`: boot only the core services
+- `selected`: boot required core services + the selected managed services
 - `unspecified`: fall back to installed-container detection or the broad lifecycle fallback
 
 `createWarden.mjs` exposes that persisted decision through `getSetupSelectionState()`.
@@ -115,8 +119,9 @@ It should only be `true` when all of these are true for the current Warden sessi
 
 1. setup is completed
 2. persisted selection mode is `selected`
-3. the persisted selection includes services beyond minimal Moon and Sage
-4. `init()` chose the normal minimal post-setup boot path and those selected services are not already running
+3. the persisted selection includes services beyond the core boot set
+4. Warden intentionally stayed on the core boot path for that session and those selected services are not already
+   running
 
 Successful full `startEcosystem()` clears that flag.
 Later service outages, failed probes, or manually stopped selected services must not turn it back on by themselves.
@@ -135,14 +140,17 @@ is easy to break if you change the restore merge logic casually.
 If the settings-store read fails, Warden marks persisted runtime config as not fully loaded and may proceed using the
 local snapshot fallback after retrying.
 
-## Minimal Boot
+## Core Boot
 
-Minimal boot starts Sage and Moon only.
+Core boot starts Mongo, Redis, Vault, Sage, and Moon.
 
-- Sage health URL: `http://noona-sage:3004/health`
+- Mongo and Redis still rely on Docker health instead of Warden-side HTTP probes
+- Vault, Sage, and Moon start after the core data services are available and persisted runtime config has had a chance
+  to reload
 - Moon health URL comes from the descriptor and `WEBGUI_PORT`, defaulting to `http://noona-moon:3000/`
 
-If `AUTO_UPDATES` is enabled, Warden checks Sage and Moon images before minimal startup.
+If `AUTO_UPDATES` is enabled, Warden applies the same deferred-restart startup update flow here that `bootFull()`
+uses.
 
 ## Service Catalog State
 

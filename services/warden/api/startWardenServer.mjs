@@ -4,13 +4,13 @@ import {URL} from 'node:url';
 
 import {isWardenHttpError} from '../core/wardenErrors.mjs';
 import {normalizeSetupProfileSnapshot, toPublicSetupSnapshot} from '../core/setupProfile.mjs';
+import {WARDEN_API_CLIENT_NAMES} from '../docker/wardenApiClientNames.mjs';
 import {buildWardenApiTokenRegistry, stringifyServiceTokenMap} from '../docker/wardenApiTokens.mjs';
 import {errMSG, log, warn} from '../../../utilities/etc/logger.mjs';
 
 const SENSITIVE_ENV_PLACEHOLDER = '********';
-const DEFAULT_WARDEN_API_CLIENTS = Object.freeze(['noona-sage', 'noona-portal']);
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
-const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 600000;
 const DEFAULT_HEADERS_TIMEOUT_MS = 15000;
 const defaultPort = (env = process.env) => Number.parseInt(env.WARDEN_API_PORT ?? '4001', 10);
 
@@ -198,7 +198,7 @@ const resolveWardenTokenMap = (env = process.env) => {
         return configuredTokenMap;
     }
 
-    return stringifyServiceTokenMap(buildWardenApiTokenRegistry(DEFAULT_WARDEN_API_CLIENTS));
+    return stringifyServiceTokenMap(buildWardenApiTokenRegistry(WARDEN_API_CLIENT_NAMES));
 };
 
 const extractBearerToken = (req) => {
@@ -521,8 +521,20 @@ const isAllowedPortalRoute = (method, pathname, segments = []) =>
         && segments[3] === 'logs'
     );
 
+const isSelfServiceConfigRoute = (serviceName, method, segments = []) =>
+    method === 'GET'
+    && segments.length === 4
+    && segments[0] === 'api'
+    && segments[1] === 'services'
+    && segments[3] === 'config'
+    && decodeURIComponent(segments[2]) === serviceName;
+
 const isAuthorizedServiceRoute = (serviceName, method, pathname, segments = []) => {
     if (serviceName === 'noona-sage') {
+        return true;
+    }
+
+    if (isSelfServiceConfigRoute(serviceName, method, segments)) {
         return true;
     }
 
@@ -1001,7 +1013,7 @@ export const startWardenServer = ({
         ) {
             const serviceName = decodeURIComponent(segments[2]);
             const includeSecrets =
-                requesterServiceName === 'noona-sage'
+                (requesterServiceName === 'noona-sage' || requesterServiceName === serviceName)
                 && parseTruthyQueryValue(url.searchParams.get('includeSecrets'));
             try {
                 const config = await warden.getServiceConfig?.(serviceName);

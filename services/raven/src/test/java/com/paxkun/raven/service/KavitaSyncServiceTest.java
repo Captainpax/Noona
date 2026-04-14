@@ -274,6 +274,64 @@ class KavitaSyncServiceTest {
     }
 
     @Test
+    void scanLibraryForTypeRetriesPortalScanAfterMissingLibraryImmediatelyFollowingEnsure() {
+        LoggerService logger = mock(LoggerService.class);
+        AtomicInteger ensureCalls = new AtomicInteger();
+        AtomicInteger portalCalls = new AtomicInteger();
+
+        KavitaSyncService service = new KavitaSyncService(logger, RestClient.create()) {
+            @Override
+            public void ensureLibraryForType(String libraryName, String folderSegment) {
+                ensureCalls.incrementAndGet();
+            }
+
+            @Override
+            protected String resolvePortalBaseUrlEnv() {
+                return "http://noona-portal:3003";
+            }
+
+            @Override
+            protected String resolveKavitaBaseUrlEnv() {
+                return "http://noona-kavita:5000";
+            }
+
+            @Override
+            protected String resolveKavitaApiKeyEnv() {
+                return "portal-api-key";
+            }
+
+            @Override
+            protected String resolveKavitaLibraryRootEnv() {
+                return "/manga";
+            }
+
+            @Override
+            protected void scanLibraryViaPortal(String nextPortalBaseUrl, String libraryName, boolean force) {
+                int attempt = portalCalls.incrementAndGet();
+                if (attempt == 1) {
+                    throw new IllegalStateException("Library Manhwa was not found.");
+                }
+            }
+
+            @Override
+            protected List<Map<String, Object>> fetchLibraries(String baseUrl, String apiKey) {
+                throw new AssertionError("Direct Kavita lookup should not run when Portal retry succeeds.");
+            }
+
+            @Override
+            protected void scanLibrary(String baseUrl, String apiKey, int libraryId, boolean force) {
+                throw new AssertionError("Direct Kavita scan should not run when Portal retry succeeds.");
+            }
+        };
+
+        service.scanLibraryForType("Manhwa", "manhwa");
+
+        assertThat(ensureCalls.get()).isEqualTo(2);
+        assertThat(portalCalls.get()).isEqualTo(2);
+        verify(logger).warn(eq("KAVITA"), contains("Re-ensuring library and retrying once."));
+    }
+
+    @Test
     void scanLibraryForTypeFallsBackToDirectKavitaWhenPortalScanFails() {
         LoggerService logger = mock(LoggerService.class);
         AtomicInteger portalCalls = new AtomicInteger();
@@ -331,5 +389,62 @@ class KavitaSyncServiceTest {
         assertThat(directLibraryId.get()).isEqualTo(12);
         assertThat(directForce.get()).isFalse();
         verify(logger).warn(eq("KAVITA"), contains("Portal Kavita scan failed for [Manhwa]"));
+    }
+
+    @Test
+    void scanLibraryForTypeRetriesDirectLookupAfterMissingLibraryImmediatelyFollowingEnsure() {
+        LoggerService logger = mock(LoggerService.class);
+        AtomicInteger ensureCalls = new AtomicInteger();
+        AtomicInteger fetchCalls = new AtomicInteger();
+        AtomicReference<Integer> directLibraryId = new AtomicReference<>();
+
+        KavitaSyncService service = new KavitaSyncService(logger, RestClient.create()) {
+            @Override
+            public void ensureLibraryForType(String libraryName, String folderSegment) {
+                ensureCalls.incrementAndGet();
+            }
+
+            @Override
+            protected String resolvePortalBaseUrlEnv() {
+                return null;
+            }
+
+            @Override
+            protected String resolveKavitaBaseUrlEnv() {
+                return "http://noona-kavita:5000";
+            }
+
+            @Override
+            protected String resolveKavitaApiKeyEnv() {
+                return "direct-api-key";
+            }
+
+            @Override
+            protected String resolveKavitaLibraryRootEnv() {
+                return "/manga";
+            }
+
+            @Override
+            protected List<Map<String, Object>> fetchLibraries(String baseUrl, String apiKey) {
+                int attempt = fetchCalls.incrementAndGet();
+                if (attempt == 1) {
+                    return List.of();
+                }
+
+                return List.of(Map.of("id", 12, "name", "Manhwa"));
+            }
+
+            @Override
+            protected void scanLibrary(String baseUrl, String apiKey, int libraryId, boolean force) {
+                directLibraryId.set(libraryId);
+            }
+        };
+
+        service.scanLibraryForType("Manhwa", "manhwa");
+
+        assertThat(ensureCalls.get()).isEqualTo(2);
+        assertThat(fetchCalls.get()).isEqualTo(2);
+        assertThat(directLibraryId.get()).isEqualTo(12);
+        verify(logger).warn(eq("KAVITA"), contains("retrying lookup once"));
     }
 }

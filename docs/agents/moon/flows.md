@@ -69,6 +69,16 @@
   `kavita`, `komf`, and `users`.
 - The settings page handles ecosystem actions, service updates, service config edits, user management, Vault views,
   and download tuning through Moon API routes that forward into Sage.
+- Discord settings now save three user-facing handoff values together: the onboarding template, onboarding channel id,
+  and the public invite URL the signed-in home page support button uses.
+  That same card can also send the current rendered preview to Discord without persisting the draft first.
+- Discord settings also save the chapter-release post toggle and destination channel id.
+  When enabled, Portal snapshots the current Raven history as a baseline, then polls every 15 minutes and posts future
+  grouped title updates with summaries and Kavita links into that channel.
+- Updater actions are intentionally long-running.
+  `POST /api/noona/settings/services/updates` uses a longer Moon-to-Sage timeout for Warden's live registry refresh,
+  and `POST /api/noona/settings/services/:name/update-image` uses an even longer timeout so the UI can wait through a
+  synchronous Docker pull plus optional restart.
 - Admin service-config saves must stay narrow.
   Moon should only send editable keys that are explicitly modeled in Warden's `envConfig` (`readOnly !== true` and
   `serverManaged !== true`), while preserving masked secret placeholders and intentional blank clears.
@@ -91,6 +101,8 @@
 - VPN login tests are treated as final-result actions.
   Moon waits for the completed response, then shows the returned result rather than any intermediate start
   acknowledgement.
+  The login-test proxy uses a longer timeout budget than normal Sage reads because Raven's synchronous OpenVPN probe
+  can legitimately run far longer than the default 8-second proxy window.
 - `updateAllImages()` writes reboot-monitor session state into `sessionStorage` and redirects to `/rebooting`.
 - The reboot monitor page watches both target services and core recovery services such as Warden, Redis, Vault, Moon,
   and Sage until the stack is stable enough to return to settings.
@@ -103,15 +115,26 @@
 
 ## Downloads, Recommendations, And Home Feed
 
-- Home page access is gated by setup completion and auth, then loads the latest Raven titles for the landing feed.
+- Home page access is gated by setup completion and auth, then loads the latest title feed for the landing page.
+- The signed-in hero card stays Noona-only.
+  It opens Kavita directly with the shared Kavita-link resolver, links the support button through the signed-in safe
+  Discord invite route, and points follow-up requests at `/myrecommendations` without
+  surfacing Moon, Raven, or other internal service names in the hero copy.
 - Downloads are stricter than naive HTTP success checks.
   Moon only treats a queue attempt as accepted when the response is HTTP `202` and Raven returns queue status
   `queued` or `partial`.
 - The downloads page is active-first.
-  It shows a top carousel for up to ten active Raven tasks plus a simpler live list with per-row progress bars and
-  hover details instead of the older worker and history panels.
+  It shows a top poster-card rail for active Raven tasks using the same card tech as the library page, plus one shared
+  table that combines active rows with the last 24 hours of Raven history.
+  The rail is summary-only; richer chapter previews, timestamps, VPN context, and actions stay in the table row
+  details.
 - The downloads page only enables `Resume` when Raven history includes paused or interrupted tasks, even though that
   history is no longer rendered on the main page.
+- `DownloadsAddPage.tsx` now sends an optional `allowDownloadWithoutVpn` flag with each queue request so one submit
+  action can bypass Raven's global VPN-only gate without changing the downloader-wide setting.
+- `TitleDetailPage.tsx` treats `Delete title` as a destructive cleanup action now.
+  The title-page danger zone removes the Raven title entry and the managed download folder, so any softer cleanup must
+  go through the per-file delete controls instead.
 - Queued VPN-blocked tasks stay in the live queue and surface Raven's connection state, region, and last error in the
   inline row copy and hover details instead of implying that a resume action will fix them.
 - Failed Raven queue attempts remain visible in the UI and failed options stay selected in `DownloadsAddPage.tsx`.

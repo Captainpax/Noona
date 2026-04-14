@@ -7,6 +7,7 @@
 - [entrypoint.sh](../../../services/kavita/entrypoint.sh) ensures `/kavita/config` exists before launching the app.
 - On first boot, the entrypoint copies `/tmp/config/appsettings.json` into `/kavita/config/appsettings.json` only when
   the live config file is missing.
+- Warden now injects `NOONA_BOOTSTRAP_ADMIN_ON_START=true` by default for managed `noona-kavita`.
 - If `NOONA_BOOTSTRAP_ADMIN_ON_START` is truthy and
   [noona-bootstrap-admin.sh](../../../services/kavita/noona-bootstrap-admin.sh) is present, the entrypoint sources the
   helper and starts the bootstrap flow before `exec ./Kavita`.
@@ -21,6 +22,8 @@
 - If register fails, it falls back to `POST /api/Account/login` and treats a successful login as "admin already
   exists."
 - The whole bootstrap runs in the background, logs compact status lines, and exits quietly on timeout or partial config.
+- When Noona login is configured, direct first-user registration is blocked unless the request matches the configured
+  managed bootstrap admin credentials exactly.
 
 ## Noona Login Button And Redirect
 
@@ -29,6 +32,9 @@
   [account.service.ts](../../../services/kavita/UI/Web/src/app/_services/account.service.ts) and
   [user-login.component.ts](../../../services/kavita/UI/Web/src/app/registration/user-login/user-login.component.ts).
 - If the response says Noona login is enabled, the login page shows a `Log in with Noona` button.
+- If Noona login is enabled but the first managed admin does not exist yet, the login page now stays on the login
+  surface, polls `GET /api/admin/exists`, and shows a managed setup wait or recovery message instead of routing to
+  `/registration/register`.
 - Clicking that button sends the user to Moon's `/login` route with a `returnTo` callback that points to
   Moon's `/kavita/complete` route, which then sends the user back to Kavita with a `noonaToken` query param.
 
@@ -50,3 +56,5 @@
 - The API enforces the same rule in the normal `POST /api/account/login` path by rejecting password logins when
   `NOONA_SOCIAL_LOGIN_ONLY` is enabled for a valid Noona-login setup.
 - Keep the UI and API behavior aligned. Changing only one side creates confusing half-working login states.
+- Keep first-user registration gating aligned too. Managed Noona login should never leave the browser on Kavita's
+  public first-admin form while the API rejects the same path.

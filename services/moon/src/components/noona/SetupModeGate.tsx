@@ -3,7 +3,7 @@
 import {useEffect, useState} from "react";
 import {useRouter} from "next/navigation";
 import {Button, Card, Column, Row, Spinner, Text} from "@once-ui-system/core";
-import {buildBootScreenHref, normalizeSetupStatus} from "./setupStatus.mjs";
+import {normalizeSetupStatus} from "./setupStatus.mjs";
 
 type SetupStatus = {
     completed: boolean;
@@ -36,12 +36,6 @@ export function SetupModeGate({children}: SetupModeGateProps) {
 
                 const completed = setupJson?.completed === true;
                 if (completed) {
-                    if (setupJson?.manualBootRequired === true) {
-                        const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}` || "/";
-                        router.replace(buildBootScreenHref(returnTo));
-                        return;
-                    }
-
                     setSetup({completed: true, manualBootRequired: false});
                     setLoading(false);
                     return;

@@ -81,7 +81,7 @@
   Discord onboarding message,
   debug mode,
   default member permissions,
-  download worker settings,
+  download limits settings,
   and download VPN settings.
 - Debug is special.
   Existing persisted debug state is reapplied to Sage's live logger mode during startup.

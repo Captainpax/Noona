@@ -4,7 +4,7 @@
  * - commands/index.mjs
  * - commands/utils.mjs
  * - tests/discordCommands.test.mjs
- * Times this file has been edited: 9
+ * Times this file has been edited: 10
  */
 
 import crypto from 'node:crypto';
@@ -193,14 +193,14 @@ const normalizeSearchOptions = (options = []) => Array.isArray(options)
 const buildRecommendationSummary = (query, options) => {
     if (!options.length) {
         return [
-            `No Raven titles were found for "${query}".`,
+            `No matching titles were found for "${query}".`,
             `Use "${MISSING_TITLE_LABEL}" below to save it for later.`,
             'This selection expires in 10 minutes.',
         ].join('\n');
     }
 
     return [
-        `Select the Raven match to recommend for "${query}":`,
+        `Select the best match for "${query}":`,
         ...options.map((option, idx) => `${idx + 1}. ${truncate(option.title)}${option.href ? ` | ${option.href}` : ''}`),
         `If none of these match, use "${MISSING_TITLE_LABEL}" below.`,
         'This selection expires in 10 minutes.',
@@ -459,13 +459,13 @@ export const createRecommendCommand = ({
         const lines = [
             `Thanks for your recommendation for **${title}**.`,
             savedForLater
-                ? `We couldn't find a Raven source for it yet. ${SAVED_FOR_LATER_MESSAGE}`
+                ? `We couldn't find a source for it yet. ${SAVED_FOR_LATER_MESSAGE}`
                 : `I'll send you a message when it's approved or denied.`,
         ];
         if (moonRecommendationUrl) {
-            lines.push(`Track it in Moon: ${moonRecommendationUrl}`);
+            lines.push(`View in Noona: ${moonRecommendationUrl}`);
         } else if (normalizedRecommendationId) {
-            lines.push(`Track it in Moon: /myrecommendations/${encodeURIComponent(normalizedRecommendationId)}`);
+            lines.push(`View in Noona: /myrecommendations/${encodeURIComponent(normalizedRecommendationId)}`);
         }
 
         try {
@@ -565,11 +565,11 @@ export const createRecommendCommand = ({
     return {
         definition: {
             name: 'recommend',
-            description: 'Recommend a new title from Raven search results.',
+            description: 'Recommend a new title for Noona.',
             options: [
                 {
                     name: 'title',
-                    description: 'Title to search for in Raven before saving a recommendation.',
+                    description: 'Title to search before saving your recommendation.',
                     type: ApplicationCommandOptionType.String,
                     required: true,
                 },
@@ -715,9 +715,9 @@ export const createRecommendCommand = ({
                     titleName: existingTitleName,
                     kavitaBaseUrl: configuredKavitaBaseUrl,
                 });
-                const kavitaLine = kavitaUrl ? `\nOpen in Kavita: ${kavitaUrl}` : '';
+                const kavitaLine = kavitaUrl ? `\nOpen in Noona: ${kavitaUrl}` : '';
                 await updateComponentReply(interaction, {
-                    content: `**${existingTitleName}** is already on this server.${kavitaLine}`,
+                    content: `**${existingTitleName}** is already available in Noona.${kavitaLine}`,
                     components: [],
                 });
                 return true;

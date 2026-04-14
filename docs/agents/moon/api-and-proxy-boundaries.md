@@ -75,6 +75,11 @@ Important behavior:
   This avoids pinning Moon to a stale endpoint too early.
 - Once a request succeeds, that backend becomes the preferred candidate for later calls.
 - All backend fetches use `cache: "no-store"` and a timeout, defaulting to `8000` ms unless a route overrides it.
+  Moon now gives `POST /api/noona/settings/services/updates` a two-minute Sage timeout and
+  `POST /api/noona/settings/services/:name/update-image` a ten-minute Sage timeout because those updater actions stay
+  synchronous through Sage and Warden.
+  Raven's `POST /api/noona/raven/title/:uuid/checkForNew` route now uses a 60-second Sage timeout for source-planning
+  work, and `POST /api/noona/raven/library/checkForNew` uses 120 seconds for the same reason.
 
 ## Boundary Rules
 
@@ -95,5 +100,7 @@ Important behavior:
   claiming Sage was unreachable.
 - Some routes intentionally raise timeouts:
   factory reset currently uses a five-minute Sage timeout window.
+  The updater check route now uses two minutes, service image updates now use ten minutes, the title-scoped Raven
+  `checkForNew` route uses 60 seconds, and the library-wide Raven `checkForNew` route uses 120 seconds.
 - Portal metadata routes can opt into returning `5xx` payloads directly so the UI can show the backend's structured
   error instead of collapsing everything into a generic proxy failure.

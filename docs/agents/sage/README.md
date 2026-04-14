@@ -24,6 +24,9 @@ Portal actions.
 - `createSetupClient.mjs` is the only supported Warden bridge inside Sage.
   It normalizes install payloads, carries the Warden bearer token, and discovers Warden across Docker and local-host
   fallback URLs.
+- Browser-side setup and admin flows should still go Moon -> Sage -> Warden.
+  The newer service self-config bootstrap path is startup-only plumbing for managed services, not a reason to let Moon
+  bypass Sage for browser requests.
 - Setup completion changes auth behavior.
   Routes guarded by `requireSessionIfSetupCompleted` or `requireAdminSessionIfSetupCompleted` are intentionally open
   during first-run, then become protected once the wizard is marked complete.
@@ -35,7 +38,8 @@ Portal actions.
   Managed Kavita setup is the exception on the setup surface: the optional stored-settings read or mirror may defer
   during Vault CA warm-up so provisioning can still complete.
 - Sage seeds several admin settings in Vault on first successful admin persistence.
-  Naming templates, onboarding message, default permissions, debug, worker settings, and VPN settings all originate in
+  Naming templates, the Discord onboarding message plus channel id and invite URL, default permissions, debug,
+  download limits, and VPN settings all originate in
   [../../../services/sage/app/createSageApp.mjs](../../../services/sage/app/createSageApp.mjs).
 - VPN settings writes are validated in Sage before they reach Vault.
   Only the PIA provider is accepted, because Raven only supports PIA OpenVPN profiles.

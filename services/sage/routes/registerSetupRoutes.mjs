@@ -13,7 +13,13 @@ const SETUP_SECRET_PLACEHOLDER = '********'
 const MASKED_MANAGED_KAVITA_PASSWORD_ERROR =
     'Re-enter the managed Kavita admin password before continuing. Saved setup profiles keep it masked.'
 const MANAGED_KAVITA_VAULT_WARMUP_ERROR_CODES = new Set(['ENOENT', 'EACCES', 'EPERM'])
-const MINIMAL_LIFECYCLE_SERVICES = Object.freeze(['noona-sage', 'noona-moon'])
+const MINIMAL_LIFECYCLE_SERVICES = Object.freeze([
+    'noona-mongo',
+    'noona-redis',
+    'noona-vault',
+    'noona-sage',
+    'noona-moon',
+])
 const MINIMAL_LIFECYCLE_SERVICE_SET = new Set(MINIMAL_LIFECYCLE_SERVICES)
 
 const normalizeString = (value) => {

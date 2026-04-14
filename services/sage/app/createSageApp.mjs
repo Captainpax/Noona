@@ -456,10 +456,11 @@ export const createSageApp = ({
         volumePad: 2,
     })
     const DISCORD_ONBOARDING_MESSAGE_SETTINGS_KEY = 'discord.onboarding_message'
+    const DEFAULT_DISCORD_INVITE_URL = 'https://discord.gg/ukhtZrgJ9e'
     const DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS = Object.freeze({
         key: DISCORD_ONBOARDING_MESSAGE_SETTINGS_KEY,
         template: [
-            'Welcome to {guild_name}!',
+            'Welcome to {guild_name}, {user_mention}!',
             '',
             'Start with Moon: {moon_url}',
             'Read in Kavita: {kavita_url}',
@@ -467,6 +468,14 @@ export const createSageApp = ({
             'Use the website onboarding flow to create your library access.',
             'Server: {server_ip}',
         ].join('\n'),
+        channelId: '',
+        inviteUrl: DEFAULT_DISCORD_INVITE_URL,
+    })
+    const DISCORD_CHAPTER_NOTIFICATION_SETTINGS_KEY = 'discord.chapter_notifications'
+    const DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS = Object.freeze({
+        key: DISCORD_CHAPTER_NOTIFICATION_SETTINGS_KEY,
+        enabled: false,
+        channelId: '',
     })
 
     const DEFAULT_DEBUG_SETTINGS = Object.freeze({
@@ -474,6 +483,7 @@ export const createSageApp = ({
         enabled: isDebugEnabled(),
     })
     const DEFAULT_MEMBER_PERMISSIONS_SETTINGS_KEY = 'auth.default_member_permissions'
+    const DOWNLOAD_LIMITS_SETTINGS_KEY = 'downloads.limits'
     const DOWNLOAD_WORKER_SETTINGS_KEY = 'downloads.workers'
     const DOWNLOAD_VPN_SETTINGS_KEY = 'downloads.vpn'
     const DISCORD_AUTH_SETTINGS_KEY = 'auth.discord'
@@ -499,6 +509,23 @@ export const createSageApp = ({
         } catch {
             return ''
         }
+    }
+    const resolveDiscordInviteUrl = (value) => {
+        const normalized = normalizeAbsoluteHttpUrl(value)
+        return normalized || DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.inviteUrl
+    }
+    const validateDiscordInviteUrlInput = (value) => {
+        const trimmed = normalizeString(value)
+        if (!trimmed) {
+            return DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.inviteUrl
+        }
+
+        const normalized = normalizeAbsoluteHttpUrl(trimmed)
+        if (!normalized) {
+            throw new Error('inviteUrl must be a valid absolute HTTP or HTTPS URL.')
+        }
+
+        return normalized
     }
     const normalizeUsername = (value) => normalizeString(value)
     const normalizeUsernameKey = (value) => normalizeUsername(value).toLowerCase()
@@ -696,6 +723,10 @@ export const createSageApp = ({
         key: DOWNLOAD_WORKER_SETTINGS_KEY,
         threadRateLimitsKbps: [],
         cpuCoreIds: [],
+    })
+    const DEFAULT_DOWNLOAD_LIMITS_SETTINGS = Object.freeze({
+        key: DOWNLOAD_LIMITS_SETTINGS_KEY,
+        overallSpeedLimitKbps: 0,
     })
     const DEFAULT_DOWNLOAD_VPN_SETTINGS = Object.freeze({
         key: DOWNLOAD_VPN_SETTINGS_KEY,
@@ -968,6 +999,29 @@ export const createSageApp = ({
     }
     const hasNonEmptyDiscordOnboardingTemplate = (value) =>
         typeof value === 'string' && value.trim().length > 0
+    const normalizeDiscordChannelId = (value) => {
+        const normalized = normalizeString(value)
+        return /^\d{5,32}$/.test(normalized) ? normalized : ''
+    }
+    const normalizeOverallSpeedLimitKbps = (value) => {
+        const parsed = parseThreadRateLimitEntry(value)
+        return parsed.ok ? Math.max(0, parsed.value) : DEFAULT_DOWNLOAD_LIMITS_SETTINGS.overallSpeedLimitKbps
+    }
+    const validateOverallSpeedLimitInput = (value) => {
+        const parsed = parseThreadRateLimitEntry(value, {strict: true})
+        if (!parsed.ok) {
+            return {ok: false, error: `overallSpeedLimitKbps ${parsed.error}`}
+        }
+
+        return {ok: true, overallSpeedLimitKbps: Math.max(0, parsed.value)}
+    }
+    const resolveLegacyOverallSpeedLimitKbps = (settings = {}) => {
+        const rateLimits = Array.isArray(settings?.threadRateLimitsKbps) ? settings.threadRateLimitsKbps : []
+        return rateLimits.reduce((sum, entry) => {
+            const normalized = normalizeOverallSpeedLimitKbps(entry)
+            return normalized > 0 ? sum + normalized : sum
+        }, 0)
+    }
     const sanitizeDownloadVpnSettingsForResponse = (settings = {}) => {
         const password = normalizeString(settings?.piaPassword)
         const maskedPassword = password ? '********' : ''
@@ -2081,6 +2135,24 @@ export const createSageApp = ({
             )
         }
 
+        const existingDiscordChapterNotifications = await vaultClient.mongo.findOne(settingsCollection, {
+            key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key,
+        })
+        if (!existingDiscordChapterNotifications) {
+            await vaultClient.mongo.update(
+                settingsCollection,
+                {key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key},
+                {
+                    $set: {
+                        ...DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS,
+                        announcementCount: 0,
+                        updatedAt: timestamp,
+                    },
+                },
+                {upsert: true},
+            )
+        }
+
         const existingDebug = await vaultClient.mongo.findOne(settingsCollection, {
             key: DEFAULT_DEBUG_SETTINGS.key,
         })
@@ -2117,17 +2189,19 @@ export const createSageApp = ({
             )
         }
 
-        const existingDownloadWorkerSettings = await vaultClient.mongo.findOne(settingsCollection, {
-            key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
+        const existingDownloadLimitsSettings = await vaultClient.mongo.findOne(settingsCollection, {
+            key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
         })
-        if (!existingDownloadWorkerSettings) {
+        if (!existingDownloadLimitsSettings) {
             await vaultClient.mongo.update(
                 settingsCollection,
-                {key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key},
+                {key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key},
                 {
                     $set: {
-                        ...DEFAULT_DOWNLOAD_WORKER_SETTINGS,
-                        threadRateLimitsKbps: normalizeThreadRateLimits(DEFAULT_DOWNLOAD_WORKER_SETTINGS.threadRateLimitsKbps),
+                        ...DEFAULT_DOWNLOAD_LIMITS_SETTINGS,
+                        overallSpeedLimitKbps: normalizeOverallSpeedLimitKbps(
+                            DEFAULT_DOWNLOAD_LIMITS_SETTINGS.overallSpeedLimitKbps,
+                        ),
                         updatedAt: timestamp,
                     },
                 },
@@ -2213,6 +2287,8 @@ export const createSageApp = ({
             return {
                 key: DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.key,
                 template: DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.template,
+                channelId: DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.channelId,
+                inviteUrl: DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.inviteUrl,
                 updatedAt: null,
             }
         }
@@ -2226,10 +2302,12 @@ export const createSageApp = ({
             template: hasNonEmptyDiscordOnboardingTemplate(doc?.template)
                 ? doc.template
                 : DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.template,
+            channelId: normalizeDiscordChannelId(doc?.channelId),
+            inviteUrl: resolveDiscordInviteUrl(doc?.inviteUrl),
             updatedAt: normalizeString(doc?.updatedAt) || null,
         }
     }
-    const writeDiscordOnboardingMessageSetting = async (template) => {
+    const writeDiscordOnboardingMessageSetting = async (template, channelId = '', inviteUrl = '') => {
         if (!vaultClient?.mongo?.update) {
             throw new Error('Vault storage is not configured.')
         }
@@ -2242,6 +2320,8 @@ export const createSageApp = ({
         const next = {
             key: DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.key,
             template,
+            channelId: normalizeDiscordChannelId(channelId),
+            inviteUrl: validateDiscordInviteUrlInput(inviteUrl),
             updatedAt,
         }
 
@@ -2249,6 +2329,87 @@ export const createSageApp = ({
             settingsCollection,
             {key: DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.key},
             {$set: next},
+            {upsert: true},
+        )
+
+        return next
+    }
+    const readDiscordChapterNotificationSettings = async () => {
+        if (!vaultClient?.mongo?.findOne) {
+            return {
+                key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key,
+                enabled: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.enabled,
+                channelId: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.channelId,
+                updatedAt: null,
+                lastAnnouncedAt: null,
+                announcementCount: 0,
+            }
+        }
+
+        const doc = await vaultClient.mongo.findOne(settingsCollection, {
+            key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key,
+        })
+
+        return {
+            key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key,
+            enabled: parseBooleanInput(doc?.enabled) === true,
+            channelId: normalizeDiscordChannelId(doc?.channelId),
+            updatedAt: normalizeString(doc?.updatedAt) || null,
+            lastAnnouncedAt: normalizeString(doc?.lastAnnouncedAt) || null,
+            announcementCount:
+                Number.isFinite(Number(doc?.announcementCount)) && Number(doc?.announcementCount) >= 0
+                    ? Math.floor(Number(doc?.announcementCount))
+                    : 0,
+        }
+    }
+    const writeDiscordChapterNotificationSettings = async ({enabled, channelId = ''} = {}) => {
+        if (!vaultClient?.mongo?.update) {
+            throw new Error('Vault storage is not configured.')
+        }
+
+        const normalizedEnabled = parseBooleanInput(enabled)
+        if (normalizedEnabled == null) {
+            throw new Error('enabled must be a boolean value.')
+        }
+
+        const normalizedChannelId = normalizeDiscordChannelId(channelId)
+        if (normalizedEnabled && !normalizedChannelId) {
+            throw new Error('channelId must not be empty when Discord chapter posts are enabled.')
+        }
+
+        const existing = vaultClient?.mongo?.findOne
+            ? await vaultClient.mongo.findOne(settingsCollection, {
+                key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key,
+            })
+            : null
+        const updatedAt = new Date().toISOString()
+        const next = {
+            key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key,
+            enabled: normalizedEnabled,
+            channelId: normalizedChannelId,
+            updatedAt,
+            lastAnnouncedAt: normalizeString(existing?.lastAnnouncedAt) || null,
+            announcementCount:
+                Number.isFinite(Number(existing?.announcementCount)) && Number(existing?.announcementCount) >= 0
+                    ? Math.floor(Number(existing?.announcementCount))
+                    : 0,
+        }
+        const nextSet = {
+            key: next.key,
+            enabled: next.enabled,
+            channelId: next.channelId,
+            updatedAt: next.updatedAt,
+        }
+
+        if (parseBooleanInput(existing?.enabled) !== true && normalizedEnabled === true) {
+            nextSet.baselineCapturedAt = null
+            nextSet.sentChapterKeys = []
+        }
+
+        await vaultClient.mongo.update(
+            settingsCollection,
+            {key: DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key},
+            {$set: nextSet},
             {upsert: true},
         )
 
@@ -2354,75 +2515,53 @@ export const createSageApp = ({
 
         return {...next, updatedAt}
     }
-    const readDownloadWorkerSettings = async () => {
-        const slotCount = await resolveDownloadWorkerSlotCount()
+    const readDownloadLimitsSettings = async () => {
         if (!vaultClient?.mongo?.findOne) {
             return {
-                key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
-                threadRateLimitsKbps: normalizeWorkerSettingArray(
-                    DEFAULT_DOWNLOAD_WORKER_SETTINGS.threadRateLimitsKbps,
-                    slotCount,
-                    UNLIMITED_THREAD_RATE_LIMIT_KBPS,
-                    normalizeThreadRateLimits,
-                ),
-                cpuCoreIds: normalizeWorkerSettingArray(
-                    DEFAULT_DOWNLOAD_WORKER_SETTINGS.cpuCoreIds,
-                    slotCount,
-                    UNPINNED_CPU_CORE_ID,
-                    normalizeCpuCoreIds,
+                key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+                overallSpeedLimitKbps: normalizeOverallSpeedLimitKbps(
+                    DEFAULT_DOWNLOAD_LIMITS_SETTINGS.overallSpeedLimitKbps,
                 ),
                 updatedAt: null,
             }
         }
 
-        const doc = await vaultClient.mongo.findOne(settingsCollection, {
+        const limitsDoc = await vaultClient.mongo.findOne(settingsCollection, {
+            key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+        })
+        if (limitsDoc) {
+            return {
+                key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+                overallSpeedLimitKbps: normalizeOverallSpeedLimitKbps(limitsDoc?.overallSpeedLimitKbps),
+                updatedAt: normalizeString(limitsDoc?.updatedAt) || null,
+            }
+        }
+
+        const legacyDoc = await vaultClient.mongo.findOne(settingsCollection, {
             key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
         })
+        const legacyOverallSpeedLimitKbps = resolveLegacyOverallSpeedLimitKbps(legacyDoc)
 
         return {
-            key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
-            threadRateLimitsKbps: normalizeWorkerSettingArray(
-                doc?.threadRateLimitsKbps,
-                slotCount,
-                UNLIMITED_THREAD_RATE_LIMIT_KBPS,
-                normalizeThreadRateLimits,
-            ),
-            cpuCoreIds: normalizeWorkerSettingArray(
-                doc?.cpuCoreIds,
-                slotCount,
-                UNPINNED_CPU_CORE_ID,
-                normalizeCpuCoreIds,
-            ),
-            updatedAt: normalizeString(doc?.updatedAt) || null,
+            key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+            overallSpeedLimitKbps: legacyOverallSpeedLimitKbps,
+            updatedAt: normalizeString(legacyDoc?.updatedAt) || null,
         }
     }
-    const writeDownloadWorkerSettings = async (threadRateLimitsKbps, cpuCoreIds) => {
+    const writeDownloadLimitsSettings = async (overallSpeedLimitKbps) => {
         if (!vaultClient?.mongo?.update) {
             throw new Error('Vault storage is not configured.')
         }
 
-        const slotCount = await resolveDownloadWorkerSlotCount()
-        const nextThreadRateLimitsKbps = normalizeWorkerSettingArray(
-            threadRateLimitsKbps,
-            slotCount,
-            UNLIMITED_THREAD_RATE_LIMIT_KBPS,
-            normalizeThreadRateLimits,
-        )
-        const nextCpuCoreIds = normalizeWorkerSettingArray(
-            cpuCoreIds,
-            slotCount,
-            UNPINNED_CPU_CORE_ID,
-            normalizeCpuCoreIds,
-        )
+        const nextOverallSpeedLimitKbps = normalizeOverallSpeedLimitKbps(overallSpeedLimitKbps)
         const updatedAt = new Date().toISOString()
         await vaultClient.mongo.update(
             settingsCollection,
-            {key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key},
+            {key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key},
             {
                 $set: {
-                    key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
-                    threadRateLimitsKbps: nextThreadRateLimitsKbps,
-                    cpuCoreIds: nextCpuCoreIds,
+                    key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+                    overallSpeedLimitKbps: nextOverallSpeedLimitKbps,
                     updatedAt,
                 },
             },
@@ -2430,10 +2569,32 @@ export const createSageApp = ({
         )
 
         return {
-            key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
-            threadRateLimitsKbps: nextThreadRateLimitsKbps,
-            cpuCoreIds: nextCpuCoreIds,
+            key: DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+            overallSpeedLimitKbps: nextOverallSpeedLimitKbps,
             updatedAt,
+        }
+    }
+    const readDownloadWorkerSettings = async () => {
+        const settings = await readDownloadLimitsSettings()
+        return {
+            key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
+            threadRateLimitsKbps: [normalizeOverallSpeedLimitKbps(settings?.overallSpeedLimitKbps)],
+            cpuCoreIds: [],
+            updatedAt: settings?.updatedAt || null,
+        }
+    }
+    const writeDownloadWorkerSettings = async (threadRateLimitsKbps, _cpuCoreIds) => {
+        const normalizedRateLimits = Array.isArray(threadRateLimitsKbps) ? threadRateLimitsKbps : []
+        const overallSpeedLimitKbps = normalizedRateLimits.reduce((sum, entry) => {
+            const normalized = normalizeOverallSpeedLimitKbps(entry)
+            return normalized > 0 ? sum + normalized : sum
+        }, 0)
+        const settings = await writeDownloadLimitsSettings(overallSpeedLimitKbps)
+        return {
+            key: DEFAULT_DOWNLOAD_WORKER_SETTINGS.key,
+            threadRateLimitsKbps: [normalizeOverallSpeedLimitKbps(settings?.overallSpeedLimitKbps)],
+            cpuCoreIds: [],
+            updatedAt: settings?.updatedAt || null,
         }
     }
     const readDownloadVpnSettings = async () => {
@@ -3178,8 +3339,10 @@ export const createSageApp = ({
         createAuthUser,
         createEmptyVerificationSummary,
         createSessionToken,
+        DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS,
         defaultPermissionsForRole,
         DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS,
+        DEFAULT_DOWNLOAD_LIMITS_SETTINGS,
         DEFAULT_DOWNLOAD_WORKER_SETTINGS,
         DEFAULT_DOWNLOAD_VPN_SETTINGS,
         DEFAULT_MEMBER_PERMISSIONS_SETTINGS,
@@ -3221,9 +3384,11 @@ export const createSageApp = ({
         publicUser,
         queueEcosystemRestart,
         ravenClient,
+        readDiscordChapterNotificationSettings,
         readDiscordOnboardingMessageSetting,
         readDefaultMemberPermissions,
         readDebugSetting,
+        readDownloadLimitsSettings,
         readNamingSettings,
         readDownloadWorkerSettings,
         readDownloadVpnSettings,
@@ -3251,6 +3416,7 @@ export const createSageApp = ({
         sortMoonPermissions,
         toSessionUser,
         updateAuthUser,
+        validateOverallSpeedLimitInput,
         validateCpuCoreIdsInput,
         validatePermissionListInput,
         validateThreadRateLimitsInput,
@@ -3263,8 +3429,10 @@ export const createSageApp = ({
         verifySessionPassword,
         wizardMetadata,
         wizardStateClient,
+        writeDiscordChapterNotificationSettings,
         writeDiscordOnboardingMessageSetting,
         writeDefaultMemberPermissions,
+        writeDownloadLimitsSettings,
         writeNamingSettings,
         writeDownloadWorkerSettings,
         writeDownloadVpnSettings,

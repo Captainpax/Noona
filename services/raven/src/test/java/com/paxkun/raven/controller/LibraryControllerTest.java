@@ -4,7 +4,7 @@
  * - src/main/java/com/paxkun/raven/service/LibraryService.java
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/controller/LibraryController.java
- * Times this file has been edited: 2
+ * Times this file has been edited: 3
  */
 package com.paxkun.raven.controller;
 
@@ -24,6 +24,7 @@ import java.util.Map;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -94,5 +95,65 @@ class LibraryControllerTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("provider and providerSeriesId are required."));
+    }
+
+    @Test
+    void deleteTitleReturnsDeletedPayloadWhenServiceSucceeds() throws Exception {
+        when(libraryService.deleteTitle("uuid-delete")).thenReturn(true);
+
+        mockMvc.perform(delete("/v1/library/title/{uuid}", "uuid-delete"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(true));
+    }
+
+    @Test
+    void deleteTitleReturnsStructuredErrorWhenFolderRemovalFails() throws Exception {
+        when(libraryService.deleteTitle("uuid-delete")).thenThrow(new IllegalStateException("Folder removal failed."));
+
+        mockMvc.perform(delete("/v1/library/title/{uuid}", "uuid-delete"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error").value("Folder removal failed."));
+    }
+
+    @Test
+    void titleCheckEndpointReturnsAcceptedWhenChaptersWereQueued() throws Exception {
+        when(libraryService.checkForNewChaptersByUuid("uuid-sync")).thenReturn(new LibraryService.TitleSyncResult(
+                "uuid-sync",
+                "Solo Leveling",
+                "queued",
+                "2",
+                "1",
+                "1",
+                2,
+                1,
+                1,
+                0,
+                java.util.List.of("2"),
+                java.util.List.of("2"),
+                java.util.List.of(),
+                java.util.List.of("1"),
+                "Queued 1 new chapter(s)."
+        ));
+
+        mockMvc.perform(post("/v1/library/title/{uuid}/checkForNew", "uuid-sync"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("queued"));
+    }
+
+    @Test
+    void libraryCheckEndpointReturnsOkWhenNothingWasQueued() throws Exception {
+        when(libraryService.checkForNewChapters()).thenReturn(new LibraryService.LibrarySyncSummary(
+                2,
+                0,
+                0,
+                0,
+                0,
+                java.util.List.of(),
+                "All titles are up-to-date."
+        ));
+
+        mockMvc.perform(post("/v1/library/checkForNew"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.queuedChapters").value(0));
     }
 }

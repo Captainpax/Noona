@@ -4,55 +4,68 @@
     <ng-container body>
 
       @if (isLoaded()) {
-        @if (showPasswordLogin()) {
-          <form [formGroup]="loginForm" (ngSubmit)="login()" novalidate class="needs-validation">
-            <div class="card-text">
-              <div class="mb-3">
-                <label for="username" class="form-label visually-hidden">{{ t('username') }}</label>
-                <input class="form-control custom-input" formControlName="username" id="username"
-                       autocomplete="username"
-                       type="text" autofocus [placeholder]="t('username')">
-              </div>
-
-              <div class="mb-2">
-                <label for="password" class="form-label visually-hidden">{{ t('password') }}</label>
-                <input class="form-control custom-input" formControlName="password" name="password"
-                       autocomplete="current-password"
-                       id="password" type="password" [placeholder]="t('password')">
-              </div>
-
-              <div class="mb-3 forgot-password">
-                <a routerLink="/registration/reset-password">{{ t('forgot-password') }}</a>
-              </div>
-
+        @if (showNoonaAdminBootstrapNotice()) {
+          <div class="card-text">
+            <p>{{ noonaAdminBootstrapMessage() }}</p>
+            @if (noonaAdminBootstrapState() === 'failed') {
               <div class="sign-in">
-                <button class="btn btn-outline-primary" type="submit" [disabled]="isSubmitting()">{{ t('submit') }}
+                <button (click)="retryNoonaAdminBootstrap()" class="btn btn-outline-primary" type="button">
+                  Refresh status
                 </button>
               </div>
-            </div>
-          </form>
-        }
+            }
+          </div>
+        } @else {
+          @if (showPasswordLogin()) {
+            <form (ngSubmit)="login()" [formGroup]="loginForm" class="needs-validation" novalidate>
+              <div class="card-text">
+                <div class="mb-3">
+                  <label class="form-label visually-hidden" for="username">{{ t('username') }}</label>
+                  <input [placeholder]="t('username')" autocomplete="username" autofocus
+                         class="form-control custom-input"
+                         formControlName="username" id="username" type="text">
+                </div>
 
-        @if (showOidcButton()) {
-          <a
-            class="btn btn-outline-primary mt-2 d-flex justify-content-center align-items-center gap-2"
-            [href]="baseUrl + 'oidc/login'"
-          >
-            <app-image height="36px" width="36px" [imageUrl]="'assets/icons/open-id-connect-logo.svg'"
-                       [styles]="{'object-fit': 'contains'}"/>
-            {{ oidcConfig()?.providerName || t('oidc') }}
-          </a>
-        }
+                <div class="mb-2">
+                  <label class="form-label visually-hidden" for="password">{{ t('password') }}</label>
+                  <input [placeholder]="t('password')" autocomplete="current-password" class="form-control custom-input"
+                         formControlName="password"
+                         id="password" name="password" type="password">
+                </div>
 
-        @if (showNoonaButton()) {
-          <button
-            (click)="loginWithNoona()"
-            [disabled]="isSubmitting()"
-            class="btn btn-outline-primary mt-2 w-100"
-            type="button"
-          >
-            Log in with Noona
-          </button>
+                <div class="mb-3 forgot-password">
+                  <a routerLink="/registration/reset-password">{{ t('forgot-password') }}</a>
+                </div>
+
+                <div class="sign-in">
+                  <button [disabled]="isSubmitting()" class="btn btn-outline-primary" type="submit">{{ t('submit') }}
+                  </button>
+                </div>
+              </div>
+            </form>
+          }
+
+          @if (showOidcButton()) {
+            <a
+              [href]="baseUrl + 'oidc/login'"
+              class="btn btn-outline-primary mt-2 d-flex justify-content-center align-items-center gap-2"
+            >
+              <app-image [imageUrl]="'assets/icons/open-id-connect-logo.svg'" [styles]="{'object-fit': 'contains'}" height="36px"
+                         width="36px"/>
+              {{ oidcConfig()?.providerName || t('oidc') }}
+            </a>
+          }
+
+          @if (showNoonaButton()) {
+            <button
+              (click)="loginWithNoona()"
+              [disabled]="isSubmitting()"
+              class="btn btn-outline-primary mt-2 w-100"
+              type="button"
+            >
+              Log in with Noona
+            </button>
+          }
         }
       }
     </ng-container>

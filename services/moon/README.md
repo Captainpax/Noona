@@ -27,12 +27,11 @@ recommendations, and the day-to-day admin UI.
   re-enter the managed Kavita password when only the masked placeholder is available
 - saves the setup snapshot before direct install so Warden can derive the managed service plan from persisted setup
   state
-- redirects completed installs to the public shellless `/bootScreen` route only when Warden has restarted in minimal
-  mode and the saved ecosystem still needs a manual start for the current Warden session, instead of sending them back
-  into `/setupwizard`
-- starts the saved ecosystem from `/bootScreen` through the normal Warden lifecycle path instead of using a separate
-  startup flow
-- shows the public boot screen as a short startup brief with the required recovery services, saved target services, and
+- keeps completed installs in the normal app flow on healthy restarts because Warden now restores the core services
+  first and then auto-resumes the saved lifecycle
+- keeps `/bootScreen` as a public shellless compatibility and recovery route that can still start the saved ecosystem
+  through the normal Warden lifecycle path
+- shows the public boot screen as a short recovery brief with the core recovery services, saved target services, and
   the return destination before the lifecycle request is sent
 - keeps later single-service outages, failed probes, or temporarily stopped selected services inside the normal app
   flow instead of redirecting an already-started system back to `/bootScreen`
@@ -50,11 +49,16 @@ recommendations, and the day-to-day admin UI.
   reads for a short bounded window so normal backend warm-up does not immediately surface as a browser-facing failure
 - keeps `storageRoot` as top-level setup metadata instead of mirroring raw `NOONA_DATA_ROOT` overrides into saved setup
   JSON
+- keeps Mongo, Redis, and Vault implicit in the setup wizard while still surfacing their always-on storage layout in
+  the storage and finish steps
 - saves external Komf URLs as setup-profile metadata and derives Portal's `KOMF_BASE_URL` only when Komf is configured
   as external, while managed Komf keeps Portal on the default internal `noona-komf` address
 - provides the main settings and operations UI
 - lets admins keep Moon's published URL and optional Sage backend URL in sync from the service-links view when custom
   networking requires it
+- replaces the signed-in Home hero with a Noona dashboard welcome card that links readers to `Start Reading`,
+  Discord support, and `My requests` without surfacing internal service names, and now opens `Start Reading`
+  straight into Kavita instead of routing readers through the Noona handoff bridge
 - uses the shared `/rebooting` lifecycle monitor for boot-start, signed-in ecosystem start, signed-in ecosystem
   restart, and update-all recovery flows
 - keeps reboot-monitor cards concise by collapsing noisy HTML probe payloads and treating running services without a
@@ -67,8 +71,24 @@ recommendations, and the day-to-day admin UI.
   approval or denial changes, with click-through links back into Moon
 - handles Discord-first login and account management
 - surfaces downloads, libraries, subscriptions, and recommendation flows
-- keeps the main Downloads page focused on active Raven work with an auto-playing top carousel, inline progress bars,
-  and hover details, while still using Raven history in the background only to decide when `Resume` should appear
+- keeps the main Downloads page focused on active Raven work with a library-style poster-card rail above one shared
+  table for active work and the last 24 hours, while still using Raven history to power the table and decide when
+  `Resume` should appear
+- keeps the title-detail `Check new/missing` action on a longer Sage timeout budget, so Raven can finish source
+  planning without collapsing into a fake Sage-unreachable error, and shows the queued plan immediately while live
+  progress continues through Raven task polling
+- treats title-page delete as a destructive cleanup action that removes both the Raven library entry and the managed
+  download folder on disk
+- exposes Raven's single global `Download speed limit` setting instead of the older worker-lane controls
+- lets admins opt a queued download out of Raven's global VPN-only gate from the `Add download` flow when a specific
+  title should run without waiting for the tunnel
+- lets admins save a Discord onboarding template, onboarding channel id, and public invite URL so Portal can post the
+  welcome message automatically when Discord reports a real guild-member join and Moon can link the signed-in home page
+  support button to the right server invite
+- lets admins enable Discord chapter release posts, choose the destination channel, and have Portal check Raven every
+  15 minutes for newly finished chapters, grouping the post by title with the saved summary and Kavita link
+- lets admins send the current rendered onboarding preview to the selected Discord channel without saving first, so the
+  live post can be checked before the template draft is persisted
 - treats Raven download queue attempts as successful only when Raven explicitly accepts them, so expired or invalid
   search selections stay visible as real errors
 - keeps the Raven VPN panel locked while Raven reports rotating or connecting, tracks unsaved VPN draft changes against
@@ -78,6 +98,10 @@ recommendations, and the day-to-day admin UI.
 - sends `Rotate now` with the current on-screen VPN draft first so unsaved region or credential edits are saved before
   Raven reconnects, prefers Raven's final detailed rotation failure once polling finishes, and shows the final
   login-test result instead of a background-start acknowledgement
+- treats `Test login` as a longer-running probe path so Moon waits for Raven's synchronous OpenVPN check instead of
+  timing out at the normal short Sage proxy limit
+- treats updater checks and managed image pulls as longer-running admin actions, so `Check now` gets a longer Sage
+  proxy window and single-service `Update` actions can wait through Docker pulls plus optional restarts
 
 ## Who It Is For
 
@@ -88,6 +112,8 @@ recommendations, and the day-to-day admin UI.
 
 - during first-run setup
 - when managing users, roles, service links, and updates
+- when an update check or image pull takes a while; Moon now waits longer for those updater actions before treating
+  them as failed
 - when Moon reports that it cannot reach Sage for service-management actions
 - when adjusting local browser shell preferences like the background music mute and volume controls
 - when checking live in-app toasts that catch users up on music playback, followed-title updates, or recommendation

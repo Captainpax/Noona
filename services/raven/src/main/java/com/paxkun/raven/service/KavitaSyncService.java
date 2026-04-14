@@ -2,7 +2,7 @@
  * Ensures and scans Kavita libraries for Raven-managed content.
  * Related files:
  * - src/test/java/com/paxkun/raven/service/KavitaSyncServiceTest.java
- * Times this file has been edited: 3
+ * Times this file has been edited: 4
  */
 package com.paxkun.raven.service;
 
@@ -145,7 +145,9 @@ public class KavitaSyncService {
             return;
         }
 
-        if (normalizedFolderSegment != null && resolveKavitaLibraryRootEnv() != null) {
+        String libraryRoot = resolveKavitaLibraryRootEnv();
+        boolean canEnsureLibrary = normalizedFolderSegment != null && libraryRoot != null;
+        if (canEnsureLibrary) {
             ensureLibraryForType(normalizedLibraryName, normalizedFolderSegment);
         }
 
@@ -159,7 +161,19 @@ public class KavitaSyncService {
                 logger.info("KAVITA", "Queued Kavita scan for [" + normalizedLibraryName + "] via Portal.");
                 return;
             } catch (Exception exception) {
-                logger.warn("KAVITA", "Portal Kavita scan failed for [" + normalizedLibraryName + "]: " + exception.getMessage());
+                if (canEnsureLibrary && shouldRetryScanAfterMissingLibrary(exception)) {
+                    logger.warn("KAVITA", "Portal Kavita scan could not find [" + normalizedLibraryName + "] immediately after sync. Re-ensuring library and retrying once.");
+                    try {
+                        retryEnsureLibraryForScan(normalizedLibraryName, normalizedFolderSegment);
+                        scanLibraryViaPortal(portalBaseUrl, normalizedLibraryName, false);
+                        logger.info("KAVITA", "Queued Kavita scan for [" + normalizedLibraryName + "] via Portal after retry.");
+                        return;
+                    } catch (Exception retryException) {
+                        logger.warn("KAVITA", "Portal Kavita retry scan failed for [" + normalizedLibraryName + "]: " + describeScanFailure(retryException));
+                    }
+                } else {
+                    logger.warn("KAVITA", "Portal Kavita scan failed for [" + normalizedLibraryName + "]: " + describeScanFailure(exception));
+                }
             }
         }
 
@@ -172,6 +186,12 @@ public class KavitaSyncService {
 
         try {
             Integer libraryId = findLibraryId(fetchLibraries(baseUrl, apiKey), normalizedLibraryName);
+            if (libraryId == null && canEnsureLibrary) {
+                logger.warn("KAVITA", "Direct Kavita scan could not find [" + normalizedLibraryName + "] immediately after sync. Re-ensuring library and retrying lookup once.");
+                retryEnsureLibraryForScan(normalizedLibraryName, normalizedFolderSegment);
+                libraryId = findLibraryId(fetchLibraries(baseUrl, apiKey), normalizedLibraryName);
+            }
+
             if (libraryId == null) {
                 logger.warn("KAVITA", "Unable to find Kavita library [" + normalizedLibraryName + "] for scan.");
                 return;
@@ -180,7 +200,7 @@ public class KavitaSyncService {
             scanLibrary(baseUrl, apiKey, libraryId, false);
             logger.info("KAVITA", "Queued direct Kavita scan for [" + normalizedLibraryName + "] (id=" + libraryId + ").");
         } catch (Exception exception) {
-            logger.warn("KAVITA", "Failed to scan Kavita library [" + normalizedLibraryName + "]: " + exception.getMessage());
+            logger.warn("KAVITA", "Failed to scan Kavita library [" + normalizedLibraryName + "]: " + describeScanFailure(exception));
         }
     }
 
@@ -254,6 +274,59 @@ public class KavitaSyncService {
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve()
                 .toBodilessEntity();
+    }
+
+    /**
+     * Determines whether Raven should retry a scan after a just-created library was not found.
+     *
+     * @param exception The scan exception.
+     * @return True when Raven should re-ensure the library and retry once.
+     */
+    private boolean shouldRetryScanAfterMissingLibrary(Exception exception) {
+        String message = normalizeLabel(exception != null ? exception.getMessage() : null);
+        if (message == null) {
+            return false;
+        }
+
+        String lower = message.toLowerCase(Locale.ROOT);
+        return lower.contains("not found") || lower.contains("could not find");
+    }
+
+    /**
+     * Clears the library cache and re-runs Raven's ensure step before retrying a scan.
+     *
+     * @param libraryName   The library name.
+     * @param folderSegment The managed folder segment.
+     */
+    private void retryEnsureLibraryForScan(String libraryName, String folderSegment) {
+        String normalizedLibraryName = normalizeLabel(libraryName);
+        String normalizedFolderSegment = normalizeFolderSegment(folderSegment);
+        if (normalizedLibraryName == null || normalizedFolderSegment == null) {
+            return;
+        }
+
+        knownLibraries.remove(normalizedLibraryName.toLowerCase(Locale.ROOT));
+        ensureLibraryForType(normalizedLibraryName, normalizedFolderSegment);
+    }
+
+    /**
+     * Formats scan failures with actionable guidance for common Kavita auth issues.
+     *
+     * @param exception The scan exception.
+     * @return A log-friendly failure message.
+     */
+    private String describeScanFailure(Exception exception) {
+        String message = normalizeLabel(exception != null ? exception.getMessage() : null);
+        if (message == null) {
+            return "Unexpected error.";
+        }
+
+        String lower = message.toLowerCase(Locale.ROOT);
+        if (lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") || lower.contains("forbidden")) {
+            return message + " Verify the configured KAVITA_API_KEY belongs to an admin-capable Kavita account.";
+        }
+
+        return message;
     }
 
     private Map<String, Object> buildCreateLibraryPayload(String libraryName, List<String> folderPaths, String rawType) {

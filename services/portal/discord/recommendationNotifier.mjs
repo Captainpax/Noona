@@ -5,7 +5,7 @@
  * - clients/vaultClient.mjs
  * - tests/recommendationNotifier.test.mjs
  * - app/ravenTitleVolumeMap.mjs
- * Times this file has been edited: 9
+ * Times this file has been edited: 10
  */
 
 import {applyRavenTitleVolumeMap} from '../app/ravenTitleVolumeMap.mjs';
@@ -387,13 +387,13 @@ const hasTimelineEventType = (entry = {}, type = '') =>
     recommendationTimelineEvents(entry).some(event => normalizeTimelineType(event) === type);
 const createTimelineEventId = (type = 'event') =>
     `${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10) || 'timeline'}`;
-const createSystemTimelineEvent = ({id, type, body, createdAt, username = 'Raven'} = {}) => ({
+const createSystemTimelineEvent = ({id, type, body, createdAt, username = 'Noona'} = {}) => ({
     id: normalizeString(id) || createTimelineEventId(type),
     type,
     createdAt: normalizeTimelineTimestamp(createdAt) || new Date().toISOString(),
     actor: {
         role: 'system',
-        username: normalizeString(username) || 'Raven',
+        username: normalizeString(username) || 'Noona',
         discordId: null,
         tag: null,
     },
@@ -542,6 +542,12 @@ const resolveDownloadTaskCompletedChapters = (task = {}) =>
 const resolveDownloadTaskCurrentChapter = (task = {}) =>
     normalizeString(task?.currentChapter)
     || normalizeString(task?.currentChapterNumber);
+/**
+ * Builds Noona-branded timeline text for the queued and active download stages.
+ *
+ * @param {object} task - Recommendation download task snapshot.
+ * @returns {string} User-visible timeline text.
+ */
 const buildDownloadStartedBody = (task = {}) => {
     const status = normalizeDownloadStatus(task);
     const totalChapters = resolveDownloadTaskTotalChapters(task);
@@ -551,11 +557,11 @@ const buildDownloadStartedBody = (task = {}) => {
     const parts = [
         status === 'queued'
             ? totalChapters
-                ? `Raven queued ${totalChapters} chapters for download.`
-                : 'Raven queued the requested chapters for download.'
+                ? `Noona queued ${totalChapters} chapters for this request.`
+                : 'Noona queued this request.'
             : totalChapters
-                ? `Raven started downloading ${totalChapters} chapters.`
-                : 'Raven started downloading the requested chapters.',
+                ? `Noona started downloading ${totalChapters} chapters for this request.`
+                : 'Noona started downloading this request.',
     ];
 
     if (currentChapter) {
@@ -565,7 +571,7 @@ const buildDownloadStartedBody = (task = {}) => {
     }
 
     if (status === 'recovering') {
-        parts.push('The task was recovered and resumed from cache.');
+        parts.push('Noona resumed this request from saved progress.');
     }
 
     if (message) {
@@ -574,6 +580,13 @@ const buildDownloadStartedBody = (task = {}) => {
 
     return parts.join(' ');
 };
+
+/**
+ * Builds timeline text for finished download work without implying final library readiness.
+ *
+ * @param {object} task - Recommendation download task snapshot.
+ * @returns {string} User-visible timeline text.
+ */
 const buildDownloadCompletedBody = (task = {}) => {
     const totalChapters = resolveDownloadTaskTotalChapters(task);
     const completedChapters = resolveDownloadTaskCompletedChapters(task) || totalChapters;
@@ -582,11 +595,12 @@ const buildDownloadCompletedBody = (task = {}) => {
     const parts = [
         completedChapters && totalChapters
             ? completedChapters === totalChapters
-                ? `Raven finished downloading ${completedChapters} chapters.`
-                : `Raven finished downloading ${completedChapters} of ${totalChapters} tracked chapters.`
+                ? `Noona finished downloading ${completedChapters} chapters for this request.`
+                : `Noona finished downloading ${completedChapters} of ${totalChapters} tracked chapters for this request.`
             : completedChapters
-                ? `Raven finished downloading ${completedChapters} chapters.`
-                : 'Raven finished downloading the requested chapters.',
+                ? `Noona finished downloading ${completedChapters} chapters for this request.`
+                : 'Noona finished downloading this request.',
+        'It may take another moment before this title is ready in your library.',
     ];
 
     if (latestChapter) {
@@ -625,6 +639,12 @@ const resolveDownloadProgressMilestone = (task = {}, interval = DOWNLOAD_PROGRES
 };
 const buildDownloadProgressEventId = ({milestone, totalChapters} = {}) =>
     `${DOWNLOAD_PROGRESS_TIMELINE_TYPE}:${String(milestone || 0)}:${String(totalChapters || 'unknown')}`;
+/**
+ * Builds Noona-branded timeline text for in-progress chapter milestones.
+ *
+ * @param {object} options - Named function inputs.
+ * @returns {string | null} User-visible timeline text when a milestone exists.
+ */
 const buildDownloadProgressBody = ({task, milestone, totalChapters} = {}) => {
     const normalizedMilestone = normalizePositiveInteger(milestone);
     if (!normalizedMilestone) {
@@ -636,8 +656,8 @@ const buildDownloadProgressBody = ({task, milestone, totalChapters} = {}) => {
     const message = normalizeString(task?.message);
     const parts = [
         totalChapters
-            ? `Raven downloaded ${normalizedMilestone} of ${totalChapters} chapters so far.`
-            : `Raven downloaded ${normalizedMilestone} chapters so far.`,
+            ? `Noona downloaded ${normalizedMilestone} of ${totalChapters} chapters for this request so far.`
+            : `Noona downloaded ${normalizedMilestone} chapters for this request so far.`,
     ];
 
     if (currentChapter) {
@@ -867,6 +887,32 @@ export const createRecommendationNotifier = ({
         }
     };
 
+    /**
+     * Resolves the best request-tracking link for a recommendation DM.
+     *
+     * @param {object} entry - Recommendation document snapshot.
+     * @returns {Promise<string | null>} Absolute Moon URL when available, otherwise a relative Moon path.
+     */
+    const buildRecommendationRequestUrl = async (entry = {}) => {
+        const moonRecommendationUrl = await buildMoonRecommendationUrl(entry);
+        if (moonRecommendationUrl) {
+            return moonRecommendationUrl;
+        }
+
+        const recommendationId = resolveRecommendationId(entry?._id);
+        if (!recommendationId) {
+            return null;
+        }
+
+        return `${DEFAULT_MOON_RECOMMENDATION_PATH_PREFIX}${encodeURIComponent(recommendationId)}`;
+    };
+
+    /**
+     * Sends the approval DM once a recommendation moves into an approved state.
+     *
+     * @param {object} entry - Recommendation document snapshot.
+     * @returns {Promise<void>} Resolves once the notification attempt finishes.
+     */
     const notifyApprovedRecommendation = async (entry = {}) => {
         if (!isApprovedStatus(entry?.status) || hasApprovalNotification(entry)) {
             return;
@@ -886,11 +932,17 @@ export const createRecommendationNotifier = ({
         try {
             const title = recommendationTitle(entry);
             const approverName = normalizeString(entry?.approvedBy?.username) || 'an admin';
-            const message = `Your recommendation for **${title}** has been approved by **${approverName}**.`;
+            const requestUrl = await buildRecommendationRequestUrl(entry);
+            const messageLines = [
+                `Your recommendation for **${title}** has been approved by **${approverName}**.`,
+            ];
+            if (requestUrl) {
+                messageLines.push(`You can view your request here: ${requestUrl}`);
+            }
             const sentMessage = await sendDirectMessage({
                 discordClient,
                 userId: discordUserId,
-                content: message,
+                content: messageLines.join('\n'),
             });
             const sentAt = new Date().toISOString();
             const persisted = await persistRecommendationUpdate(entry, {
@@ -950,11 +1002,11 @@ export const createRecommendationNotifier = ({
                 const commentBody = timelineCommentBody(timelineEvent);
                 const moonRecommendationUrl = await buildMoonRecommendationUrl(entry);
                 const lines = [
-                    `You have a new admin comment on your recommendation for **${title}** from **${commenterName}**.`,
+                    `You have a new admin note on your request for **${title}** from **${commenterName}**.`,
                     `Comment: ${commentBody}`,
                 ];
                 if (moonRecommendationUrl) {
-                    lines.push(`Open in Moon: ${moonRecommendationUrl}`);
+                    lines.push(`View in Noona: ${moonRecommendationUrl}`);
                 }
                 const sentMessage = await sendDirectMessage({
                     discordClient,
@@ -1090,6 +1142,12 @@ export const createRecommendationNotifier = ({
         }
     };
 
+    /**
+     * Sends the final ready DM after Raven import is visible and Kavita can resolve the title URL.
+     *
+     * @param {object} options - Named function inputs.
+     * @returns {Promise<void>} Resolves once the notification attempt finishes.
+     */
     const notifyCompletedRecommendation = async ({entry, library} = {}) => {
         if (!isApprovedStatus(entry?.status) || hasCompletionNotification(entry)) {
             return;
@@ -1100,14 +1158,12 @@ export const createRecommendationNotifier = ({
             return;
         }
 
-        const hasCompletedDownload = hasTimelineEventType(entry, DOWNLOAD_COMPLETED_TIMELINE_TYPE);
-
         const existingTitle = resolveExistingLibraryTitle({
             library,
             selectedTitle: entry?.title,
             selectedHref: entry?.href,
         });
-        if (!existingTitle && !hasCompletedDownload) {
+        if (!existingTitle) {
             return;
         }
 
@@ -1118,7 +1174,9 @@ export const createRecommendationNotifier = ({
             kavitaBaseUrl: configuredKavitaBaseUrl,
             logger,
         });
-        const moonRecommendationUrl = !kavitaUrl ? await buildMoonRecommendationUrl(entry) : null;
+        if (!kavitaUrl) {
+            return;
+        }
 
         const key = recommendationNotificationKey(entry, 'completed');
         if (inFlightNotifications.has(key)) {
@@ -1127,18 +1185,10 @@ export const createRecommendationNotifier = ({
 
         inFlightNotifications.add(key);
         try {
-            const messageLines = kavitaUrl
-                ? [
-                    `Your recommendation for **${titleName}** is now available in Kavita.`,
-                    `Open in Kavita: ${kavitaUrl}`,
-                ]
-                : [
-                    `Raven finished downloading your recommendation for **${titleName}**.`,
-                    `Kavita may still be indexing it, so I do not have a direct link yet.`,
-                ];
-            if (moonRecommendationUrl) {
-                messageLines.push(`Track it in Moon: ${moonRecommendationUrl}`);
-            }
+            const messageLines = [
+                `Your recommendation for **${titleName}** is ready in Noona.`,
+                `Open in Noona: ${kavitaUrl}`,
+            ];
             const sentMessage = await sendDirectMessage({
                 discordClient,
                 userId: discordUserId,
@@ -1149,8 +1199,8 @@ export const createRecommendationNotifier = ({
                 $set: {
                     'notifications.completionDmSentAt': sentAt,
                     'notifications.completionDmMessageId': normalizeString(sentMessage?.id) || null,
-                    'notifications.completionKavitaUrl': kavitaUrl || null,
-                    'notifications.completionMoonUrl': moonRecommendationUrl || null,
+                    'notifications.completionKavitaUrl': kavitaUrl,
+                    'notifications.completionMoonUrl': null,
                     completedAt: sentAt,
                 },
             });
@@ -1160,8 +1210,8 @@ export const createRecommendationNotifier = ({
                     ...(entry.notifications && typeof entry.notifications === 'object' ? entry.notifications : {}),
                     completionDmSentAt: sentAt,
                     completionDmMessageId: normalizeString(sentMessage?.id) || null,
-                    completionKavitaUrl: kavitaUrl || null,
-                    completionMoonUrl: moonRecommendationUrl || null,
+                    completionKavitaUrl: kavitaUrl,
+                    completionMoonUrl: null,
                 };
                 entry.completedAt = sentAt;
             }
@@ -1303,17 +1353,17 @@ export const createRecommendationNotifier = ({
             const volumeMapSuffix = volumeMap?.status === 'applied'
                 ? (
                     (Number(volumeMap?.renameSummary?.renamed) || 0) > 0
-                        ? ' Raven also stored the chapter-to-volume map and renamed existing files to the real volume numbers.'
-                        : ' Raven also stored the chapter-to-volume map.'
+                        ? ' Noona also stored the chapter-to-volume map and renamed existing files to the real volume numbers.'
+                        : ' Noona also stored the chapter-to-volume map.'
                 )
                 : volumeMap?.status === 'no-op'
-                    ? ' The matched provider did not expose usable chapter-to-volume coverage, so Raven left the current chapter file naming unchanged.'
+                    ? ' The matched provider did not expose usable chapter-to-volume coverage, so Noona left the current chapter file naming unchanged.'
                     : '';
             const timelineEvent = createSystemTimelineEvent({
                 type: 'comment',
-                body: `Noona applied the saved metadata selection (${providerDetail}) to Kavita after Raven finished the import.${volumeMapSuffix}`,
+                body: `Noona applied the saved metadata selection (${providerDetail}) after this title finished importing.${volumeMapSuffix}`,
                 createdAt: attemptedAt,
-                username: 'Portal',
+                username: 'Noona',
             });
             await persistMetadataSelectionUpdate({
                 entry,

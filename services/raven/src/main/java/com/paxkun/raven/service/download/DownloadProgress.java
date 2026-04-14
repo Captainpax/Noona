@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/LibraryService.java
  * - src/test/java/com/paxkun/raven/controller/DownloadControllerTest.java
  * - src/test/java/com/paxkun/raven/service/DownloadServiceTest.java
- * Times this file has been edited: 5
+ * Times this file has been edited: 6
  */
 package com.paxkun.raven.service.download;
 
@@ -44,11 +44,8 @@ public class DownloadProgress {
     private List<String> completedChapterNumbers;
     private List<String> newChapterNumbers;
     private List<String> missingChapterNumbers;
-    private Integer workerIndex;
-    private Integer cpuCoreId;
-    private Long workerPid;
-    private String executionMode;
     private boolean pauseRequested;
+    private boolean allowDownloadWithoutVpn;
     private long lastUpdated;
 
     /**
@@ -94,11 +91,8 @@ public class DownloadProgress {
             List<String> completedChapterNumbers,
             List<String> newChapterNumbers,
             List<String> missingChapterNumbers,
-            Integer workerIndex,
-            Integer cpuCoreId,
-            Long workerPid,
-            String executionMode,
             boolean pauseRequested,
+            boolean allowDownloadWithoutVpn,
             long lastUpdated) {
         this.title = title;
         this.queuedAt = queuedAt;
@@ -126,11 +120,8 @@ public class DownloadProgress {
         this.completedChapterNumbers = dedupeChapterList(completedChapterNumbers);
         this.newChapterNumbers = dedupeChapterList(newChapterNumbers);
         this.missingChapterNumbers = dedupeChapterList(missingChapterNumbers);
-        this.workerIndex = workerIndex;
-        this.cpuCoreId = cpuCoreId;
-        this.workerPid = workerPid;
-        this.executionMode = executionMode;
         this.pauseRequested = pauseRequested;
+        this.allowDownloadWithoutVpn = allowDownloadWithoutVpn;
         this.lastUpdated = lastUpdated;
     }
 
@@ -389,25 +380,6 @@ public class DownloadProgress {
     }
 
     /**
-     * Handles assign worker.
-     *
-     * @param nextWorkerIndex The next worker index.
-     * @param nextCpuCoreId The next cpu core id.
-     * @param nextWorkerPid The next worker pid.
-     * @param nextExecutionMode The next execution mode.
-     */
-
-    public synchronized void assignWorker(Integer nextWorkerIndex, Integer nextCpuCoreId, Long nextWorkerPid, String nextExecutionMode) {
-        this.workerIndex = nextWorkerIndex;
-        this.cpuCoreId = nextCpuCoreId;
-        this.workerPid = nextWorkerPid;
-        if (nextExecutionMode != null && !nextExecutionMode.isBlank()) {
-            this.executionMode = nextExecutionMode.trim();
-        }
-        this.lastUpdated = now();
-    }
-
-    /**
      * Handles copy.
      *
      * @return The resulting DownloadProgress.
@@ -441,11 +413,8 @@ public class DownloadProgress {
                 completedChapterNumbers,
                 newChapterNumbers,
                 missingChapterNumbers,
-                workerIndex,
-                cpuCoreId,
-                workerPid,
-                executionMode,
                 pauseRequested,
+                allowDownloadWithoutVpn,
                 lastUpdated);
     }
 
@@ -471,10 +440,6 @@ public class DownloadProgress {
             }
         }
         return remaining;
-    }
-
-    public synchronized Integer getWorkerIndex() {
-        return workerIndex;
     }
 
     public synchronized String getTaskId() {
@@ -586,24 +551,31 @@ public class DownloadProgress {
         return new ArrayList<>(missingChapterNumbers);
     }
 
-    public synchronized Integer getCpuCoreId() {
-        return cpuCoreId;
-    }
-
-    public synchronized Long getWorkerPid() {
-        return workerPid;
-    }
-
-    public synchronized String getExecutionMode() {
-        return executionMode;
-    }
-
     public synchronized boolean isPauseRequested() {
         return pauseRequested;
     }
 
     public synchronized void setPauseRequested(boolean pauseRequested) {
         this.pauseRequested = pauseRequested;
+        this.lastUpdated = now();
+    }
+
+    /**
+     * Returns whether this queued task can start without Raven's global VPN-only gate.
+     *
+     * @return True when VPN waiting should be bypassed for this task.
+     */
+    public synchronized boolean isAllowDownloadWithoutVpn() {
+        return allowDownloadWithoutVpn;
+    }
+
+    /**
+     * Updates whether this task can bypass Raven's global VPN-only queue gate.
+     *
+     * @param allowDownloadWithoutVpn True when Raven should skip VPN waiting for this task.
+     */
+    public synchronized void setAllowDownloadWithoutVpn(boolean allowDownloadWithoutVpn) {
+        this.allowDownloadWithoutVpn = allowDownloadWithoutVpn;
         this.lastUpdated = now();
     }
 

@@ -23,6 +23,8 @@ import {
     type MoonPermission,
     normalizeMoonPermissions as normalizePermissions,
 } from "@/utils/moonPermissions";
+import {moonSite} from "@/resources";
+import {formatVpnTestLoginErrorMessage} from "@/utils/vpnTestLogin.mjs";
 import {SetupModeGate} from "./SetupModeGate";
 import {AuthGate} from "./AuthGate";
 import {emitNoonaSiteNotification} from "./SiteNotifications";
@@ -55,7 +57,6 @@ import {
     type SettingsViewId as ViewId,
     TAB_LABELS,
 } from "./settings";
-import {CPU_CORE_UNPINNED, normalizeCpuCoreIdDrafts} from "./downloadWorkerSettings.mjs";
 import {
     areVpnDraftsEqual,
     buildVpnDisableOnlySaveRequestBody,
@@ -203,22 +204,26 @@ type DownloadNamingSettings = {
 type DiscordOnboardingMessageSettings = {
     key?: string | null;
     template?: string | null;
+    channelId?: string | null;
+    inviteUrl?: string | null;
     updatedAt?: string | null;
     error?: string;
 };
 
-type DownloadWorkerSettings = {
+type DiscordChapterNotificationSettings = {
     key?: string | null;
-    threadRateLimitsKbps?: number[] | null;
-    cpuCoreIds?: number[] | null;
+    enabled?: boolean | null;
+    channelId?: string | null;
     updatedAt?: string | null;
+    lastAnnouncedAt?: string | null;
+    announcementCount?: number | null;
     error?: string;
 };
 
-type RavenWorkerRuntimeSummary = {
-    workerExecutionMode?: string | null;
-    workerCpuCoreIds?: number[] | null;
-    availableCpuIds?: number[] | null;
+type DownloadLimitsSettings = {
+    key?: string | null;
+    overallSpeedLimitKbps?: number | null;
+    updatedAt?: string | null;
     error?: string;
 };
 
@@ -453,7 +458,7 @@ const TOKENS = [
     "{ext}",
 ];
 const DEFAULT_DISCORD_ONBOARDING_TEMPLATE = [
-    "Welcome to {guild_name}!",
+    "Welcome to {guild_name}, {user_mention}!",
     "",
     "Start with Moon: {moon_url}",
     "Read in Kavita: {kavita_url}",
@@ -461,11 +466,17 @@ const DEFAULT_DISCORD_ONBOARDING_TEMPLATE = [
     "Use the website onboarding flow to create your library access.",
     "Server: {server_ip}",
 ].join("\n");
+const DEFAULT_DISCORD_INVITE_URL = moonSite.discordUrl;
 const DISCORD_ONBOARDING_PLACEHOLDERS = [
     {
         token: "{guild_name}",
         label: "Guild name",
         description: "Guild name from the latest successful Discord connection test in this browser session.",
+    },
+    {
+        token: "{user_mention}",
+        label: "New member mention",
+        description: "Mention for the Discord member who just joined.",
     },
     {
         token: "{guild_id}",
@@ -1047,15 +1058,12 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const [pagePad, setPagePad] = useState("3");
     const [chapterPad, setChapterPad] = useState("3");
     const [volumePad, setVolumePad] = useState("2");
-    const [downloadWorkerSettingsLoading, setDownloadWorkerSettingsLoading] = useState(false);
-    const [downloadWorkerSettingsSaving, setDownloadWorkerSettingsSaving] = useState(false);
-    const [downloadWorkerSettingsError, setDownloadWorkerSettingsError] = useState<string | null>(null);
-    const [downloadWorkerSettingsMessage, setDownloadWorkerSettingsMessage] = useState<string | null>(null);
-    const [downloadWorkerSettingsUpdatedAt, setDownloadWorkerSettingsUpdatedAt] = useState<string | null>(null);
-    const [downloadWorkerRateLimits, setDownloadWorkerRateLimits] = useState<string[]>([THREAD_RATE_LIMIT_UNLIMITED]);
-    const [downloadWorkerCpuCoreIds, setDownloadWorkerCpuCoreIds] = useState<string[]>([CPU_CORE_UNPINNED]);
-    const [downloadWorkerAvailableCpuIds, setDownloadWorkerAvailableCpuIds] = useState<number[]>([]);
-    const [downloadWorkerExecutionMode, setDownloadWorkerExecutionMode] = useState<string>("thread");
+    const [downloadLimitsLoading, setDownloadLimitsLoading] = useState(false);
+    const [downloadLimitsSaving, setDownloadLimitsSaving] = useState(false);
+    const [downloadLimitsError, setDownloadLimitsError] = useState<string | null>(null);
+    const [downloadLimitsMessage, setDownloadLimitsMessage] = useState<string | null>(null);
+    const [downloadLimitsUpdatedAt, setDownloadLimitsUpdatedAt] = useState<string | null>(null);
+    const [downloadSpeedLimitDraft, setDownloadSpeedLimitDraft] = useState(THREAD_RATE_LIMIT_UNLIMITED);
     const [vpnLoading, setVpnLoading] = useState(false);
     const [vpnSaving, setVpnSaving] = useState(false);
     const [vpnRotating, setVpnRotating] = useState(false);
@@ -1095,10 +1103,22 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const [discordValidationError, setDiscordValidationError] = useState<string | null>(null);
     const [discordOnboardingLoading, setDiscordOnboardingLoading] = useState(false);
     const [discordOnboardingSaving, setDiscordOnboardingSaving] = useState(false);
+    const [discordOnboardingTesting, setDiscordOnboardingTesting] = useState(false);
     const [discordOnboardingError, setDiscordOnboardingError] = useState<string | null>(null);
     const [discordOnboardingMessage, setDiscordOnboardingMessage] = useState<string | null>(null);
     const [discordOnboardingTemplate, setDiscordOnboardingTemplate] = useState(DEFAULT_DISCORD_ONBOARDING_TEMPLATE);
+    const [discordOnboardingChannelId, setDiscordOnboardingChannelId] = useState("");
+    const [discordInviteUrl, setDiscordInviteUrl] = useState<string>(DEFAULT_DISCORD_INVITE_URL);
     const [discordOnboardingUpdatedAt, setDiscordOnboardingUpdatedAt] = useState<string | null>(null);
+    const [discordChapterNotificationsLoading, setDiscordChapterNotificationsLoading] = useState(false);
+    const [discordChapterNotificationsSaving, setDiscordChapterNotificationsSaving] = useState(false);
+    const [discordChapterNotificationsError, setDiscordChapterNotificationsError] = useState<string | null>(null);
+    const [discordChapterNotificationsMessage, setDiscordChapterNotificationsMessage] = useState<string | null>(null);
+    const [discordChapterNotificationsEnabled, setDiscordChapterNotificationsEnabled] = useState(false);
+    const [discordChapterNotificationsChannelId, setDiscordChapterNotificationsChannelId] = useState("");
+    const [discordChapterNotificationsUpdatedAt, setDiscordChapterNotificationsUpdatedAt] = useState<string | null>(null);
+    const [discordChapterNotificationsLastAnnouncedAt, setDiscordChapterNotificationsLastAnnouncedAt] = useState<string | null>(null);
+    const [discordChapterNotificationsAnnouncementCount, setDiscordChapterNotificationsAnnouncementCount] = useState(0);
     const [factoryResetConfirmation, setFactoryResetConfirmation] = useState("");
     const [factoryResetBusy, setFactoryResetBusy] = useState(false);
     const [factoryResetDeleteRavenDownloads, setFactoryResetDeleteRavenDownloads] = useState(false);
@@ -1248,14 +1268,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const wardenAutoUpdatesField = wardenEnvConfig.find((entry) => normalizeString(entry?.key).trim() === "AUTO_UPDATES");
     const wardenHostBaseUrl = normalizeString(wardenEditor.config?.hostServiceUrl).trim();
     const wardenAutoUpdatesEnabled = parseBooleanEnvFlag(wardenEditor.envDraft.AUTO_UPDATES);
-    const ravenThreadCount = useMemo(() => {
-        const configured = editors["noona-raven"]?.config?.env?.RAVEN_DOWNLOAD_THREADS;
-        const parsed = Number(configured);
-        if (Number.isFinite(parsed) && parsed > 0) {
-            return Math.max(1, Math.floor(parsed));
-        }
-        return 3;
-    }, [editors]);
     const canAccessEcosystem = hasPermission(currentPermissions, "admin");
     const canManageUsers = hasPermission(currentPermissions, "user_management");
     const canShowNav = canAccessEcosystem || canManageUsers;
@@ -1266,6 +1278,10 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const vaultMongoUriField = vaultEnvConfig.find((entry) => normalizeString(entry?.key).trim() === "MONGO_URI");
     const portalEditor = editors["noona-portal"] ?? defaultEditor();
     const portalEnvConfig = Array.isArray(portalEditor.config?.envConfig) ? portalEditor.config.envConfig : [];
+    const discordChannels = useMemo(
+        () => (Array.isArray(discordValidation?.channels) ? discordValidation.channels : []),
+        [discordValidation],
+    );
     const portalDiscordFields = portalEnvConfig.filter((entry) => PORTAL_DISCORD_KEYS.has(normalizeString(entry?.key).trim()));
     const portalAccessFields = portalEnvConfig.filter((entry) => PORTAL_COMMAND_ACCESS_KEYS.has(normalizeString(entry?.key).trim()));
     const discordGuildId = normalizeString(portalEditor.envDraft.DISCORD_GUILD_ID).trim();
@@ -1291,6 +1307,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const discordOnboardingPlaceholderValues = useMemo(
         (): Record<DiscordOnboardingPlaceholderToken, string> => ({
             "{guild_name}": discordValidatedGuildName,
+            "{user_mention}": "@new-member",
             "{guild_id}": discordGuildId,
             "{moon_url}": moonPublishedUrl,
             "{kavita_url}": kavitaPreviewUrl,
@@ -1302,6 +1319,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
         () => resolveDiscordOnboardingPreview(discordOnboardingTemplate, discordOnboardingPlaceholderValues),
         [discordOnboardingPlaceholderValues, discordOnboardingTemplate],
     );
+    const canSendDiscordOnboardingTest =
+        normalizeString(discordOnboardingChannelId).trim().length > 0
+        && normalizeString(discordOnboardingPreview.preview).trim().length > 0;
     const komfEditor = editors["noona-komf"] ?? defaultEditor();
     const komfEnvConfig = Array.isArray(komfEditor.config?.envConfig) ? komfEditor.config.envConfig : [];
     const kavitaUsersByIdentity = useMemo(() => {
@@ -1586,12 +1606,42 @@ export function SettingsPage({selection}: SettingsPageProps) {
                     ? json.template
                     : DEFAULT_DISCORD_ONBOARDING_TEMPLATE,
             );
+            setDiscordOnboardingChannelId(normalizeString(json?.channelId).trim());
+            setDiscordInviteUrl(normalizeString(json?.inviteUrl).trim() || DEFAULT_DISCORD_INVITE_URL);
             setDiscordOnboardingUpdatedAt(normalizeString(json?.updatedAt).trim() || null);
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
             setDiscordOnboardingError(msg);
         } finally {
             setDiscordOnboardingLoading(false);
+        }
+    };
+    const loadDiscordChapterNotifications = async () => {
+        setDiscordChapterNotificationsLoading(true);
+        setDiscordChapterNotificationsError(null);
+        setDiscordChapterNotificationsMessage(null);
+        try {
+            const res = await fetch("/api/noona/settings/discord/chapter-notifications", {cache: "no-store"});
+            const json = (await res.json().catch(() => null)) as DiscordChapterNotificationSettings | null;
+            if (!res.ok) {
+                setDiscordChapterNotificationsError(parseError(json, `Failed to load chapter release posts (HTTP ${res.status}).`));
+                return;
+            }
+
+            setDiscordChapterNotificationsEnabled(json?.enabled === true);
+            setDiscordChapterNotificationsChannelId(normalizeString(json?.channelId).trim());
+            setDiscordChapterNotificationsUpdatedAt(normalizeString(json?.updatedAt).trim() || null);
+            setDiscordChapterNotificationsLastAnnouncedAt(normalizeString(json?.lastAnnouncedAt).trim() || null);
+            setDiscordChapterNotificationsAnnouncementCount(
+                Number.isFinite(Number(json?.announcementCount)) && Number(json?.announcementCount) >= 0
+                    ? Math.floor(Number(json?.announcementCount))
+                    : 0,
+            );
+        } catch (error_) {
+            const msg = error_ instanceof Error ? error_.message : String(error_);
+            setDiscordChapterNotificationsError(msg);
+        } finally {
+            setDiscordChapterNotificationsLoading(false);
         }
     };
     const saveDiscordOnboardingMessage = async () => {
@@ -1608,7 +1658,11 @@ export function SettingsPage({selection}: SettingsPageProps) {
             const res = await fetch("/api/noona/settings/discord/onboarding-message", {
                 method: "PUT",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({template: discordOnboardingTemplate}),
+                body: JSON.stringify({
+                    template: discordOnboardingTemplate,
+                    channelId: discordOnboardingChannelId,
+                    inviteUrl: discordInviteUrl,
+                }),
             });
             const json = (await res.json().catch(() => null)) as DiscordOnboardingMessageSettings | null;
             if (!res.ok) {
@@ -1621,6 +1675,8 @@ export function SettingsPage({selection}: SettingsPageProps) {
                     ? json.template
                     : discordOnboardingTemplate,
             );
+            setDiscordOnboardingChannelId(normalizeString(json?.channelId).trim());
+            setDiscordInviteUrl(normalizeString(json?.inviteUrl).trim() || DEFAULT_DISCORD_INVITE_URL);
             setDiscordOnboardingUpdatedAt(normalizeString(json?.updatedAt).trim() || new Date().toISOString());
             setDiscordOnboardingMessage("Onboarding message saved.");
         } catch (error_) {
@@ -1628,6 +1684,42 @@ export function SettingsPage({selection}: SettingsPageProps) {
             setDiscordOnboardingError(msg);
         } finally {
             setDiscordOnboardingSaving(false);
+        }
+    };
+    const saveDiscordChapterNotifications = async () => {
+        setDiscordChapterNotificationsSaving(true);
+        setDiscordChapterNotificationsError(null);
+        setDiscordChapterNotificationsMessage(null);
+        try {
+            const res = await fetch("/api/noona/settings/discord/chapter-notifications", {
+                method: "PUT",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    enabled: discordChapterNotificationsEnabled,
+                    channelId: discordChapterNotificationsChannelId,
+                }),
+            });
+            const json = (await res.json().catch(() => null)) as DiscordChapterNotificationSettings | null;
+            if (!res.ok) {
+                setDiscordChapterNotificationsError(parseError(json, `Failed to save chapter release posts (HTTP ${res.status}).`));
+                return;
+            }
+
+            setDiscordChapterNotificationsEnabled(json?.enabled === true);
+            setDiscordChapterNotificationsChannelId(normalizeString(json?.channelId).trim());
+            setDiscordChapterNotificationsUpdatedAt(normalizeString(json?.updatedAt).trim() || new Date().toISOString());
+            setDiscordChapterNotificationsLastAnnouncedAt(normalizeString(json?.lastAnnouncedAt).trim() || null);
+            setDiscordChapterNotificationsAnnouncementCount(
+                Number.isFinite(Number(json?.announcementCount)) && Number(json?.announcementCount) >= 0
+                    ? Math.floor(Number(json?.announcementCount))
+                    : 0,
+            );
+            setDiscordChapterNotificationsMessage("Chapter release posts saved.");
+        } catch (error_) {
+            const msg = error_ instanceof Error ? error_.message : String(error_);
+            setDiscordChapterNotificationsError(msg);
+        } finally {
+            setDiscordChapterNotificationsSaving(false);
         }
     };
     const copyDiscordOnboardingPreview = async () => {
@@ -1639,6 +1731,46 @@ export function SettingsPage({selection}: SettingsPageProps) {
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
             setDiscordOnboardingError(msg);
+        }
+    };
+    const sendDiscordOnboardingTest = async () => {
+        const channelId = normalizeString(discordOnboardingChannelId).trim();
+        const content = discordOnboardingPreview.preview;
+
+        if (!channelId) {
+            setDiscordOnboardingError("Onboarding channel id is required for a test send.");
+            setDiscordOnboardingMessage(null);
+            return;
+        }
+
+        if (!normalizeString(content).trim()) {
+            setDiscordOnboardingError("Rendered preview must not be empty.");
+            setDiscordOnboardingMessage(null);
+            return;
+        }
+
+        setDiscordOnboardingTesting(true);
+        setDiscordOnboardingError(null);
+        setDiscordOnboardingMessage(null);
+        try {
+            const res = await fetch("/api/noona/settings/discord/onboarding-message/test", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({channelId, content}),
+            });
+            const json = (await res.json().catch(() => null)) as { channelId?: string | null; error?: string } | null;
+            if (!res.ok) {
+                setDiscordOnboardingError(parseError(json, `Failed to send onboarding test (HTTP ${res.status}).`));
+                return;
+            }
+
+            const responseChannelId = normalizeString(json?.channelId).trim() || channelId;
+            setDiscordOnboardingMessage(`Test message sent to ${responseChannelId}.`);
+        } catch (error_) {
+            const msg = error_ instanceof Error ? error_.message : String(error_);
+            setDiscordOnboardingError(msg);
+        } finally {
+            setDiscordOnboardingTesting(false);
         }
     };
     const updateEcosystemState = async (
@@ -2003,80 +2135,54 @@ export function SettingsPage({selection}: SettingsPageProps) {
         }
     };
 
-    const loadDownloadWorkerRuntimeSummary = async () => {
+    const loadDownloadLimits = async () => {
+        setDownloadLimitsLoading(true);
+        setDownloadLimitsError(null);
+        setDownloadLimitsMessage(null);
         try {
-            const res = await fetch("/api/noona/raven/downloads/summary", {cache: "no-store"});
-            const json = (await res.json().catch(() => null)) as RavenWorkerRuntimeSummary | null;
+            const res = await fetch("/api/noona/settings/downloads/limits", {cache: "no-store"});
+            const json = (await res.json().catch(() => null)) as DownloadLimitsSettings | null;
             if (!res.ok) {
+                setDownloadLimitsError(parseError(json, `Failed to load download limit (HTTP ${res.status}).`));
                 return;
             }
 
-            const availableCpuIds = Array.isArray(json?.availableCpuIds)
-                ? json.availableCpuIds.filter((entry): entry is number => typeof entry === "number" && Number.isFinite(entry))
-                : [];
-            setDownloadWorkerAvailableCpuIds(availableCpuIds);
-            setDownloadWorkerExecutionMode(normalizeString(json?.workerExecutionMode).trim() || "thread");
-        } catch {
-            setDownloadWorkerAvailableCpuIds([]);
-            setDownloadWorkerExecutionMode("thread");
-        }
-    };
-
-    const loadDownloadWorkerSettings = async () => {
-        setDownloadWorkerSettingsLoading(true);
-        setDownloadWorkerSettingsError(null);
-        setDownloadWorkerSettingsMessage(null);
-        try {
-            const res = await fetch("/api/noona/settings/downloads/workers", {cache: "no-store"});
-            const json = (await res.json().catch(() => null)) as DownloadWorkerSettings | null;
-            if (!res.ok) {
-                setDownloadWorkerSettingsError(parseError(json, `Failed to load worker settings (HTTP ${res.status}).`));
-                return;
-            }
-
-            setDownloadWorkerRateLimits(normalizeThreadRateLimitDrafts(json?.threadRateLimitsKbps, ravenThreadCount));
-            setDownloadWorkerCpuCoreIds(normalizeCpuCoreIdDrafts(json?.cpuCoreIds, ravenThreadCount));
-            setDownloadWorkerSettingsUpdatedAt(normalizeString(json?.updatedAt).trim() || null);
-            await loadDownloadWorkerRuntimeSummary();
+            setDownloadSpeedLimitDraft(formatThreadRateLimitDraft(json?.overallSpeedLimitKbps));
+            setDownloadLimitsUpdatedAt(normalizeString(json?.updatedAt).trim() || null);
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
-            setDownloadWorkerSettingsError(msg);
+            setDownloadLimitsError(msg);
         } finally {
-            setDownloadWorkerSettingsLoading(false);
+            setDownloadLimitsLoading(false);
         }
     };
 
-    const saveDownloadWorkerSettings = async () => {
-        setDownloadWorkerSettingsSaving(true);
-        setDownloadWorkerSettingsError(null);
-        setDownloadWorkerSettingsMessage(null);
+    const saveDownloadLimits = async () => {
+        setDownloadLimitsSaving(true);
+        setDownloadLimitsError(null);
+        setDownloadLimitsMessage(null);
         try {
-            const normalizedRateLimits = normalizeThreadRateLimitDrafts(downloadWorkerRateLimits, ravenThreadCount);
-            const normalizedCpuCoreIds = normalizeCpuCoreIdDrafts(downloadWorkerCpuCoreIds, ravenThreadCount);
-            const res = await fetch("/api/noona/settings/downloads/workers", {
+            const res = await fetch("/api/noona/settings/downloads/limits", {
                 method: "PUT",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({
-                    threadRateLimitsKbps: normalizedRateLimits,
-                    cpuCoreIds: normalizedCpuCoreIds,
+                    overallSpeedLimitKbps: downloadSpeedLimitDraft,
                 }),
             });
-            const json = (await res.json().catch(() => null)) as DownloadWorkerSettings | null;
+            const json = (await res.json().catch(() => null)) as DownloadLimitsSettings | null;
             if (!res.ok) {
-                setDownloadWorkerSettingsError(parseError(json, `Failed to save worker settings (HTTP ${res.status}).`));
+                setDownloadLimitsError(parseError(json, `Failed to save download limit (HTTP ${res.status}).`));
                 return;
             }
 
-            setDownloadWorkerRateLimits(normalizeThreadRateLimitDrafts(json?.threadRateLimitsKbps, ravenThreadCount));
-            setDownloadWorkerCpuCoreIds(normalizeCpuCoreIdDrafts(json?.cpuCoreIds, ravenThreadCount));
-            setDownloadWorkerSettingsUpdatedAt(normalizeString(json?.updatedAt).trim() || null);
-            await loadDownloadWorkerRuntimeSummary();
-            setDownloadWorkerSettingsMessage("Worker settings saved.");
+            setDownloadSpeedLimitDraft(formatThreadRateLimitDraft(json?.overallSpeedLimitKbps));
+            setDownloadLimitsUpdatedAt(normalizeString(json?.updatedAt).trim() || null);
+            setDownloadLimitsMessage("Download speed limit saved.");
         } catch (error_) {
             const msg = error_ instanceof Error ? error_.message : String(error_);
-            setDownloadWorkerSettingsError(msg);
+            setDownloadLimitsError(msg);
         } finally {
-            setDownloadWorkerSettingsSaving(false);
+            setDownloadLimitsSaving(false);
         }
     };
 
@@ -2377,9 +2483,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
             }
             const failed = !res.ok || json?.ok === false;
             if (failed) {
-                const message = normalizeString(json?.error).trim()
+                const message = formatVpnTestLoginErrorMessage(normalizeString(json?.error).trim()
                     || normalizeString(json?.message).trim()
-                    || `Failed to test VPN login (HTTP ${res.status}).`;
+                    || `Failed to test VPN login (HTTP ${res.status}).`);
                 setVpnError(message);
                 return;
             }
@@ -2391,7 +2497,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
                 reportedIp: json?.reportedIp,
             }, vpnRegion));
         } catch (error_) {
-            const msg = error_ instanceof Error ? error_.message : String(error_);
+            const msg = formatVpnTestLoginErrorMessage(error_ instanceof Error ? error_.message : String(error_));
             if (isLatestVpnAction(actionToken)) {
                 setVpnError(msg);
             }
@@ -3351,7 +3457,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
         if (activeView === "downloader") {
             ensureServiceConfigLoaded("noona-raven");
             void loadNaming();
-            void loadDownloadWorkerSettings();
+            void loadDownloadLimits();
             void loadVpnRegions();
             void loadVpnSettings();
             return;
@@ -3364,6 +3470,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
         if (activeView === "discord") {
             ensureServiceConfigGroupLoaded(["noona-portal", "noona-warden"]);
             void loadDiscordOnboardingMessage();
+            void loadDiscordChapterNotifications();
             return;
         }
         if (activeView === "kavita") {
@@ -3391,11 +3498,6 @@ export function SettingsPage({selection}: SettingsPageProps) {
             router.replace(SETTINGS_LANDING_HREF);
         }
     }, [activeSection, authStateLoading, canAccessEcosystem, canManageUsers, router]);
-
-    useEffect(() => {
-        setDownloadWorkerRateLimits((prev) => normalizeThreadRateLimitDrafts(prev, ravenThreadCount));
-        setDownloadWorkerCpuCoreIds((prev) => normalizeCpuCoreIdDrafts(prev, ravenThreadCount));
-    }, [ravenThreadCount]);
 
     useEffect(() => {
         if (activeSection !== "users" || !canManageUsers) return;
@@ -4795,108 +4897,149 @@ export function SettingsPage({selection}: SettingsPageProps) {
                     <Column gap="12">
                         <Row horizontal="between" vertical="center" gap="12" style={{flexWrap: "wrap"}}>
                             <Column gap="4">
-                                <Heading as="h2" variant="heading-strong-l">Worker lanes</Heading>
+                                <Heading as="h2" variant="heading-strong-l">Download speed limit</Heading>
                                 <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
-                                    Set a per-worker download cap in KB/s and an optional Linux CPU core ID. Use -1
-                                    for unlimited speed or an unpinned worker slot.
+                                    Set one downloader-wide cap for Raven. Use <code>0</code> or <code>-1</code> for
+                                    unlimited speed.
                                 </Text>
                                 <Text onBackground="neutral-weak" variant="body-default-xs">
-                                    Raven is currently configured
-                                    for {ravenThreadCount} thread{ravenThreadCount === 1 ? "" : "s"}.
+                                    Raven now runs downloads in a single serial queue inside the main process.
                                 </Text>
-                                <Text onBackground="neutral-weak" variant="body-default-xs">
-                                    Execution mode: {downloadWorkerExecutionMode || "thread"}
-                                </Text>
-                                {downloadWorkerAvailableCpuIds.length > 0 && (
-                                    <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
-                                        Available CPU IDs: {downloadWorkerAvailableCpuIds.join(", ")}
-                                    </Text>
-                                )}
-                                {downloadWorkerSettingsUpdatedAt && (
+                                {downloadLimitsUpdatedAt && (
                                     <Text onBackground="neutral-weak" variant="body-default-xs">
-                                        Updated {formatIso(downloadWorkerSettingsUpdatedAt)}
+                                        Updated {formatIso(downloadLimitsUpdatedAt)}
                                     </Text>
                                 )}
                             </Column>
                             <Row gap="8">
-                                <Button variant="secondary" disabled={downloadWorkerSettingsLoading}
-                                        onClick={() => void loadDownloadWorkerSettings()}>
-                                    {downloadWorkerSettingsLoading ? "Reloading..." : "Reload"}
+                                <Button variant="secondary" disabled={downloadLimitsLoading}
+                                        onClick={() => void loadDownloadLimits()}>
+                                    {downloadLimitsLoading ? "Reloading..." : "Reload"}
                                 </Button>
                                 <Button
                                     variant="primary"
-                                    disabled={downloadWorkerSettingsLoading || downloadWorkerSettingsSaving}
-                                    onClick={() => void saveDownloadWorkerSettings()}
+                                    disabled={downloadLimitsLoading || downloadLimitsSaving}
+                                    onClick={() => void saveDownloadLimits()}
                                 >
-                                    {downloadWorkerSettingsSaving ? "Saving..." : "Save worker settings"}
+                                    {downloadLimitsSaving ? "Saving..." : "Save speed limit"}
                                 </Button>
                             </Row>
                         </Row>
-                        {downloadWorkerSettingsError && <Text onBackground="danger-strong"
-                                                              variant="body-default-xs">{downloadWorkerSettingsError}</Text>}
-                        {downloadWorkerSettingsMessage && <Text onBackground="neutral-weak"
-                                                                variant="body-default-xs">{downloadWorkerSettingsMessage}</Text>}
-                        {downloadWorkerAvailableCpuIds.length > 0 && (
-                            <Row gap="8" style={{flexWrap: "wrap"}}>
-                                {downloadWorkerAvailableCpuIds.map((cpuId) => (
-                                    <Badge key={`raven-worker-cpu-${cpuId}`} background={BG_NEUTRAL_ALPHA_WEAK}
-                                           onBackground="neutral-strong">
-                                        CPU {cpuId}
-                                    </Badge>
-                                ))}
-                            </Row>
-                        )}
+                        {downloadLimitsError && <Text onBackground="danger-strong"
+                                                      variant="body-default-xs">{downloadLimitsError}</Text>}
+                        {downloadLimitsMessage && <Text onBackground="neutral-weak"
+                                                        variant="body-default-xs">{downloadLimitsMessage}</Text>}
                         <Column gap="12">
-                            {normalizeThreadRateLimitDrafts(downloadWorkerRateLimits, ravenThreadCount).map((value, index) => {
-                                const cpuCoreDraft = normalizeCpuCoreIdDrafts(downloadWorkerCpuCoreIds, ravenThreadCount)[index];
-                                return (
-                                    <Card
-                                        key={`raven-worker-settings-${index + 1}`}
-                                        fillWidth
-                                        background={BG_SURFACE}
-                                        border="neutral-alpha-weak"
-                                        padding="m"
-                                        radius="l"
-                                    >
-                                        <Column gap="12">
-                                            <Heading as="h3" variant="heading-strong-s">
-                                                Worker {index + 1}
-                                            </Heading>
-                                            <Row gap="12" style={{flexWrap: "wrap"}}>
-                                                <Input
-                                                    id={`raven-thread-rate-limit-${index + 1}`}
-                                                    name={`raven-thread-rate-limit-${index + 1}`}
-                                                    label="Speed limit"
-                                                    type="text"
-                                                    placeholder="512, 10mb, 1gb, or -1"
-                                                    value={value}
-                                                    onChange={(event) => setDownloadWorkerRateLimits((prev) => {
-                                                        const next = normalizeThreadRateLimitDrafts(prev, ravenThreadCount);
-                                                        next[index] = event.target.value;
-                                                        return next;
-                                                    })}
-                                                />
-                                                <Input
-                                                    id={`raven-thread-cpu-core-${index + 1}`}
-                                                    name={`raven-thread-cpu-core-${index + 1}`}
-                                                    label="CPU core ID"
-                                                    type="text"
-                                                    placeholder="-1 or 0"
-                                                    value={cpuCoreDraft}
-                                                    onChange={(event) => setDownloadWorkerCpuCoreIds((prev) => {
-                                                        const next = normalizeCpuCoreIdDrafts(prev, ravenThreadCount);
-                                                        next[index] = event.target.value;
-                                                        return next;
-                                                    })}
-                                                />
-                                            </Row>
-                                            <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
-                                                Use -1 to leave this worker unpinned while still process-isolated.
-                                            </Text>
-                                        </Column>
-                                    </Card>
-                                );
-                            })}
+                            <Input
+                                id="raven-download-speed-limit"
+                                name="raven-download-speed-limit"
+                                label="Overall speed limit"
+                                type="text"
+                                placeholder="512, 10mb, 1gb, or 0"
+                                value={downloadSpeedLimitDraft}
+                                onChange={(event) => setDownloadSpeedLimitDraft(event.target.value)}
+                            />
+                            <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
+                                Raven applies this cap across the whole queue, not per task. Higher values may still be
+                                limited by the source site or your VPN.
+                            </Text>
+                        </Column>
+                    </Column>
+                </Card>
+
+                <Card fillWidth background={BG_SURFACE} border="neutral-alpha-weak" padding="l" radius="l">
+                    <Column gap="12">
+                        <Row horizontal="between" vertical="center" gap="12" style={{flexWrap: "wrap"}}>
+                            <Column gap="4" style={{flex: "1 1 22rem", minWidth: 0}}>
+                                <Heading as="h2" variant="heading-strong-l">Chapter release posts</Heading>
+                                <Text onBackground="neutral-weak" variant="body-default-xs">
+                                    Every 15 minutes Portal checks Raven for newly finished chapters, groups them by
+                                    title, and posts the update to this channel with a title summary and Kavita link.
+                                </Text>
+                                {discordChapterNotificationsUpdatedAt && (
+                                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                                        Updated {formatIso(discordChapterNotificationsUpdatedAt)}
+                                    </Text>
+                                )}
+                                {discordChapterNotificationsLastAnnouncedAt && (
+                                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                                        Last Discord post {formatIso(discordChapterNotificationsLastAnnouncedAt)}
+                                    </Text>
+                                )}
+                            </Column>
+                            <Row gap="8" style={{flexWrap: "wrap"}}>
+                                <Button
+                                    variant="secondary"
+                                    disabled={discordChapterNotificationsLoading || discordChapterNotificationsSaving}
+                                    onClick={() => void loadDiscordChapterNotifications()}
+                                >
+                                    {discordChapterNotificationsLoading ? "Reloading..." : "Reload"}
+                                </Button>
+                                <Button
+                                    variant="primary"
+                                    disabled={discordChapterNotificationsLoading || discordChapterNotificationsSaving}
+                                    onClick={() => void saveDiscordChapterNotifications()}
+                                >
+                                    {discordChapterNotificationsSaving ? "Saving..." : "Save"}
+                                </Button>
+                            </Row>
+                        </Row>
+                        {discordChapterNotificationsError && (
+                            <Text onBackground="danger-strong" variant="body-default-xs">
+                                {discordChapterNotificationsError}
+                            </Text>
+                        )}
+                        {discordChapterNotificationsMessage && (
+                            <Text onBackground="neutral-weak" variant="body-default-xs">
+                                {discordChapterNotificationsMessage}
+                            </Text>
+                        )}
+                        <Row gap="12" style={{flexWrap: "wrap"}}>
+                            <Switch
+                                isChecked={discordChapterNotificationsEnabled}
+                                disabled={discordChapterNotificationsLoading || discordChapterNotificationsSaving}
+                                ariaLabel="Toggle Discord chapter release posts"
+                                onToggle={() => setDiscordChapterNotificationsEnabled((prev) => !prev)}
+                            />
+                            <Text variant="body-default-xs">Post newly downloaded chapters to Discord</Text>
+                        </Row>
+                        <Column gap="8">
+                            <Input
+                                id="discordChapterNotificationsChannelId"
+                                name="discordChapterNotificationsChannelId"
+                                label="Chapter updates channel id"
+                                type="text"
+                                placeholder="123456789012345678"
+                                value={discordChapterNotificationsChannelId}
+                                disabled={discordChapterNotificationsLoading || discordChapterNotificationsSaving}
+                                onChange={(event) => setDiscordChapterNotificationsChannelId(event.target.value)}
+                            />
+                            {discordChannels.length > 0 && (
+                                <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    {discordChannels.map((channel) => {
+                                        const channelId = normalizeString(channel?.id).trim();
+                                        if (!channelId) return null;
+                                        const selected = normalizeString(discordChapterNotificationsChannelId).trim() === channelId;
+                                        const channelName = normalizeString(channel?.name).trim() || channelId;
+                                        return (
+                                            <Button
+                                                key={`discord-chapter-notification-channel-${channelId}`}
+                                                variant={selected ? "primary" : "secondary"}
+                                                onClick={() => setDiscordChapterNotificationsChannelId(channelId)}
+                                            >
+                                                #{channelName}
+                                            </Button>
+                                        );
+                                    })}
+                                </Row>
+                            )}
+                            <Text onBackground="neutral-weak" variant="body-default-xs">
+                                Turning this on only posts future chapter completions. Noona snapshots the current
+                                Raven history as the baseline the first time you enable it.
+                            </Text>
+                            <Text onBackground="neutral-weak" variant="body-default-xs">
+                                Posts sent so far: {discordChapterNotificationsAnnouncementCount}
+                            </Text>
                         </Column>
                     </Column>
                 </Card>
@@ -4963,6 +5106,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             <Text onBackground="danger-strong" variant="body-default-xs">{vpnRegionsError}</Text>
                         )}
                         {vpnMessage && <Text onBackground="neutral-weak" variant="body-default-xs">{vpnMessage}</Text>}
+                        <Text onBackground="neutral-weak" variant="body-default-xs">
+                            Test login can take up to 90 seconds while Raven waits for the OpenVPN probe to finish.
+                        </Text>
                         <Row gap="12" style={{flexWrap: "wrap"}}>
                             <Switch
                                 isChecked={vpnEnabled}
@@ -5152,6 +5298,10 @@ export function SettingsPage({selection}: SettingsPageProps) {
                     </Row>
                     <Text onBackground="neutral-weak" variant="body-default-xs">
                         Check and apply Docker image updates in a grid so users can see the whole stack at once.
+                    </Text>
+                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                        Update checks can take up to about 2 minutes, and image pulls plus restarts can take several
+                        minutes.
                     </Text>
                     {updatesError && <Text onBackground="danger-strong" variant="body-default-xs">{updatesError}</Text>}
                     {updatesMessage &&
@@ -5493,8 +5643,8 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             <Column gap="4" style={{flex: "1 1 22rem", minWidth: 0}}>
                                 <Heading as="h2" variant="heading-strong-l">Onboarding message</Heading>
                                 <Text onBackground="neutral-weak" variant="body-default-xs">
-                                    Save a reusable welcome message for manual copy and paste. v1 only previews and
-                                    copies the message; Portal does not send it automatically.
+                                    Save the welcome template and Discord channel Portal should use when a new member
+                                    joins the guild.
                                 </Text>
                                 {discordOnboardingUpdatedAt && (
                                     <Text onBackground="neutral-weak" variant="body-default-xs">
@@ -5505,21 +5655,28 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             <Row gap="8" style={{flexWrap: "wrap"}}>
                                 <Button
                                     variant="secondary"
-                                    disabled={discordOnboardingLoading || discordOnboardingSaving}
+                                    disabled={discordOnboardingLoading || discordOnboardingSaving || discordOnboardingTesting}
                                     onClick={() => void loadDiscordOnboardingMessage()}
                                 >
                                     {discordOnboardingLoading ? "Reloading..." : "Reload"}
                                 </Button>
                                 <Button
                                     variant="secondary"
-                                    disabled={discordOnboardingLoading || discordOnboardingSaving}
+                                    disabled={discordOnboardingLoading || discordOnboardingSaving || discordOnboardingTesting}
                                     onClick={() => void copyDiscordOnboardingPreview()}
                                 >
                                     Copy preview
                                 </Button>
                                 <Button
+                                    variant="secondary"
+                                    disabled={!canSendDiscordOnboardingTest || discordOnboardingLoading || discordOnboardingSaving || discordOnboardingTesting}
+                                    onClick={() => void sendDiscordOnboardingTest()}
+                                >
+                                    {discordOnboardingTesting ? "Sending test..." : "Send test"}
+                                </Button>
+                                <Button
                                     variant="primary"
-                                    disabled={discordOnboardingLoading || discordOnboardingSaving}
+                                    disabled={discordOnboardingLoading || discordOnboardingSaving || discordOnboardingTesting}
                                     onClick={() => void saveDiscordOnboardingMessage()}
                                 >
                                     {discordOnboardingSaving ? "Saving..." : "Save"}
@@ -5537,13 +5694,65 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             </Text>
                         )}
                         <Column gap="8">
+                            <Input
+                                id="discordInviteUrl"
+                                name="discordInviteUrl"
+                                label="Discord invite URL"
+                                type="url"
+                                placeholder={DEFAULT_DISCORD_INVITE_URL}
+                                value={discordInviteUrl}
+                                disabled={discordOnboardingLoading || discordOnboardingSaving || discordOnboardingTesting}
+                                onChange={(event) => setDiscordInviteUrl(event.target.value)}
+                            />
+                            <Text onBackground="neutral-weak" variant="body-default-xs">
+                                Moon uses this link for the signed-in home page support button. Leave it blank to keep
+                                the default Noona invite.
+                            </Text>
+                        </Column>
+                        <Column gap="8">
+                            <Input
+                                id="discordOnboardingChannelId"
+                                name="discordOnboardingChannelId"
+                                label="Onboarding channel id"
+                                type="text"
+                                placeholder="123456789012345678"
+                                value={discordOnboardingChannelId}
+                                disabled={discordOnboardingLoading || discordOnboardingSaving || discordOnboardingTesting}
+                                onChange={(event) => setDiscordOnboardingChannelId(event.target.value)}
+                            />
+                            {discordChannels.length > 0 && (
+                                <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    {discordChannels.map((channel) => {
+                                        const channelId = normalizeString(channel?.id).trim();
+                                        if (!channelId) return null;
+                                        const selected = normalizeString(discordOnboardingChannelId).trim() === channelId;
+                                        const channelName = normalizeString(channel?.name).trim() || channelId;
+                                        return (
+                                            <Button
+                                                key={`discord-onboarding-channel-${channelId}`}
+                                                variant={selected ? "primary" : "secondary"}
+                                                onClick={() => setDiscordOnboardingChannelId(channelId)}
+                                            >
+                                                #{channelName}
+                                            </Button>
+                                        );
+                                    })}
+                                </Row>
+                            )}
+                            <Text onBackground="neutral-weak" variant="body-default-xs">
+                                Portal posts this message when Discord reports a real guild-member join. If the template
+                                does not include <code>{"{user_mention}"}</code>, Portal prepends the new member mention
+                                automatically.
+                            </Text>
+                        </Column>
+                        <Column gap="8">
                             <Text variant="label-default-s">Template</Text>
                             <textarea
                                 id="discordOnboardingTemplate"
                                 name="discordOnboardingTemplate"
                                 className={editorStyles.configTextarea}
                                 value={discordOnboardingTemplate}
-                                disabled={discordOnboardingLoading || discordOnboardingSaving}
+                                disabled={discordOnboardingLoading || discordOnboardingSaving || discordOnboardingTesting}
                                 aria-label="Discord onboarding message template"
                                 spellCheck={false}
                                 onChange={(event) => setDiscordOnboardingTemplate(event.target.value)}
@@ -5553,7 +5762,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
                             <Text variant="label-default-s">Placeholder reference</Text>
                             <Text onBackground="neutral-weak" variant="body-default-xs">
                                 Supported placeholders use the current Discord validation result, Portal config, Warden
-                                config, and published service links.
+                                config, published service links, and the joining Discord member.
                             </Text>
                             <div className={settingsStyles.defaultCardGrid}>
                                 {DISCORD_ONBOARDING_PLACEHOLDERS.map((placeholder) => {
@@ -5605,6 +5814,9 @@ export function SettingsPage({selection}: SettingsPageProps) {
                                     {discordOnboardingPreview.preview}
                                 </Text>
                             </Card>
+                            <Text onBackground="neutral-weak" variant="body-default-xs">
+                                Send test uses this current rendered preview and channel draft without saving first.
+                            </Text>
                             {discordOnboardingPreview.unresolvedPlaceholders.length > 0 ? (
                                 <Text onBackground="warning-strong" variant="body-default-xs">
                                     Unresolved

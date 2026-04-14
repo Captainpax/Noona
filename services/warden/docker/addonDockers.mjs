@@ -3,13 +3,15 @@
 import {resolveHostServiceBase, resolveSharedHostEnvEntries,} from './hostServiceUrl.mjs';
 import {resolveNoonaImage} from './imageRegistry.mjs';
 import {DEFAULT_MANAGED_KOMF_APPLICATION_YML} from './komfConfigTemplate.mjs';
-import {
-    resolveManagedMongoRootPassword,
-    resolveManagedMongoRootUsername,
-} from './mongoCredentials.mjs';
+import {resolveManagedMongoRootPassword, resolveManagedMongoRootUsername,} from './mongoCredentials.mjs';
+import {buildWardenApiTokenRegistry} from './wardenApiTokens.mjs';
 
 const HOST_SERVICE_URL = resolveHostServiceBase();
 const SHARED_HOST_ENV = resolveSharedHostEnvEntries();
+const DOCKER_WARDEN_URL =
+    process.env.WARDEN_DOCKER_URL
+    || process.env.INTERNAL_WARDEN_BASE_URL
+    || 'http://noona-warden:4001';
 const DEFAULT_TIMEZONE = process.env.TZ || 'UTC';
 const DEFAULT_KAVITA_ADMIN_USERNAME = process.env.KAVITA_ADMIN_USERNAME || '';
 const DEFAULT_KAVITA_ADMIN_EMAIL = process.env.KAVITA_ADMIN_EMAIL || '';
@@ -27,6 +29,8 @@ const DEFAULT_NOONA_PORTAL_BASE_URL = process.env.NOONA_PORTAL_BASE_URL || 'http
 const DEFAULT_NOONA_SOCIAL_LOGIN_ONLY = process.env.NOONA_SOCIAL_LOGIN_ONLY || 'true';
 const DEFAULT_MONGO_ROOT_USERNAME = resolveManagedMongoRootUsername(process.env);
 const DEFAULT_MONGO_ROOT_PASSWORD = resolveManagedMongoRootPassword({env: process.env});
+const WARDEN_API_CLIENT_NAMES = Object.freeze(['noona-kavita', 'noona-komf']);
+const wardenApiTokensByService = buildWardenApiTokenRegistry(WARDEN_API_CLIENT_NAMES);
 
 const createEnvField = (key, defaultValue, {
     label = key,
@@ -146,6 +150,7 @@ const rawList = [
         env: [
             ...SHARED_HOST_ENV,
             'SERVICE_NAME=noona-kavita',
+            `WARDEN_BASE_URL=${DOCKER_WARDEN_URL}`,
             `TZ=${DEFAULT_TIMEZONE}`,
             'KAVITA_CONFIG_HOST_MOUNT_PATH=',
             'KAVITA_LIBRARY_HOST_MOUNT_PATH=',
@@ -161,6 +166,12 @@ const rawList = [
                 label: 'Service Name',
                 readOnly: true,
                 description: 'Identifier used when naming the Kavita container.',
+            }),
+            createEnvField('WARDEN_BASE_URL', DOCKER_WARDEN_URL, {
+                label: 'Warden Base URL',
+                description: 'Trusted internal URL Kavita uses to restore its own runtime config during startup.',
+                warning: 'Change this only if Warden is reachable from Kavita at a different internal address.',
+                required: false,
             }),
             createEnvField('TZ', DEFAULT_TIMEZONE, {
                 label: 'Timezone',
@@ -232,6 +243,7 @@ const rawList = [
         env: [
             ...SHARED_HOST_ENV,
             'SERVICE_NAME=noona-komf',
+            `WARDEN_BASE_URL=${DOCKER_WARDEN_URL}`,
             'KOMF_KAVITA_BASE_URI=http://noona-kavita:5000',
             'KOMF_KAVITA_API_KEY=',
             'KOMF_LOG_LEVEL=INFO',
@@ -242,6 +254,12 @@ const rawList = [
                 label: 'Service Name',
                 readOnly: true,
                 description: 'Identifier used when naming the Komf container.',
+            }),
+            createEnvField('WARDEN_BASE_URL', DOCKER_WARDEN_URL, {
+                label: 'Warden Base URL',
+                description: 'Trusted internal URL Komf uses to restore its own runtime config during startup.',
+                warning: 'Change this only if Warden is reachable from Komf at a different internal address.',
+                required: false,
             }),
             createEnvField('KOMF_KAVITA_BASE_URI', 'http://noona-kavita:5000', {
                 label: 'Kavita Base URI',
@@ -276,6 +294,25 @@ const rawList = [
         restartPolicy: {Name: 'unless-stopped'},
     },
 ];
+
+for (const service of rawList) {
+    const wardenApiToken = wardenApiTokensByService[service.name];
+    if (!wardenApiToken) {
+        continue;
+    }
+
+    service.env.push(`WARDEN_API_TOKEN=${wardenApiToken}`);
+    service.envConfig.push(
+        createEnvField('WARDEN_API_TOKEN', wardenApiToken, {
+            label: 'Warden API Token',
+            readOnly: true,
+            description: `Auto-generated token ${service.name} uses to read back its own runtime config from Warden.`,
+            sensitive: true,
+            serverManaged: true,
+            required: false,
+        }),
+    );
+}
 
 const addonDockers = Object.fromEntries(
     rawList.map(service => {

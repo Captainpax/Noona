@@ -23,7 +23,8 @@ Raven-facing browser actions.
 - owns Discord OAuth and Moon auth flows
 - validates Portal Discord bot credentials and returns read-only slash-command diagnostics that Moon can surface during
   setup and settings troubleshooting
-- brokers browser-facing Raven and settings APIs
+- brokers browser-facing Raven and settings APIs, including the signed-in Discord invite lookup Moon uses on the home
+  page
 - streams the authenticated background music asset that Moon proxies into its signed-in shell
 - talks to Vault through the stack's trusted internal HTTPS path in managed installs
 - keeps wizard-state on a local fallback until Warden has created the managed Vault CA bundle, then resumes Vault-backed

@@ -1983,7 +1983,7 @@ export function registerRavenRoutes(context = {}) {
         }
         try {
             const result = await ravenClient.checkLibraryForNewChapters()
-            res.status(202).json(result ?? {})
+            res.status(result?.status ?? 200).json(result?.payload ?? {})
         } catch (error) {
             logger.error(`[${serviceName}] Failed to check Raven library for updates: ${error.message}`)
             res.status(502).json({error: 'Unable to check Raven library for updates.'})
@@ -2047,7 +2047,7 @@ export function registerRavenRoutes(context = {}) {
                 return
             }
 
-            res.status(202).json(result)
+            res.status(result.status ?? 200).json(result.payload ?? {})
         } catch (error) {
             logger.error(`[${serviceName}] Failed to check Raven title ${uuid}: ${error.message}`)
             res.status(502).json({error: 'Unable to check Raven title for updates.'})
@@ -2239,6 +2239,7 @@ export function registerRavenRoutes(context = {}) {
             return
         }
         const searchId = typeof req.body?.searchId === 'string' ? req.body.searchId.trim() : ''
+        const allowDownloadWithoutVpnRaw = req.body?.allowDownloadWithoutVpn
         const optionIndexRaw = req.body?.optionIndex
         const optionIndex =
             typeof optionIndexRaw === 'number'
@@ -2246,6 +2247,10 @@ export function registerRavenRoutes(context = {}) {
                 : typeof optionIndexRaw === 'string' && optionIndexRaw.trim()
                     ? Number(optionIndexRaw)
                     : NaN
+        const allowDownloadWithoutVpn =
+            typeof allowDownloadWithoutVpnRaw === 'boolean'
+                ? allowDownloadWithoutVpnRaw
+                : undefined
 
         if (!searchId) {
             res.status(400).json({error: 'searchId is required.'})
@@ -2258,7 +2263,11 @@ export function registerRavenRoutes(context = {}) {
         }
 
         try {
-            const queueResponse = await ravenClient.queueDownloadDetailed({searchId, optionIndex})
+            const queuePayload = {searchId, optionIndex}
+            if (typeof allowDownloadWithoutVpn === 'boolean') {
+                queuePayload.allowDownloadWithoutVpn = allowDownloadWithoutVpn
+            }
+            const queueResponse = await ravenClient.queueDownloadDetailed(queuePayload)
             res.status(queueResponse?.status ?? 202).json(queueResponse?.payload ?? {})
         } catch (error) {
             logger.error(

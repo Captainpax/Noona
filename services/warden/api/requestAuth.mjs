@@ -1,9 +1,5 @@
+import {WARDEN_API_CLIENT_NAMES} from '../docker/wardenApiClientNames.mjs';
 import {buildWardenApiTokenRegistry} from '../docker/wardenApiTokens.mjs';
-
-export const WARDEN_API_CLIENT_NAMES = Object.freeze([
-    'noona-sage',
-    'noona-portal',
-]);
 
 const PORTAL_ALLOWED_PERMISSIONS = new Set([
     'read-services',
@@ -212,6 +208,10 @@ export function isWardenRequestAuthorized(serviceName, permission) {
 
     if (serviceName === 'noona-portal') {
         return PORTAL_ALLOWED_PERMISSIONS.has(permission);
+    }
+
+    if (permission === 'read-service-config') {
+        return true;
     }
 
     return false;

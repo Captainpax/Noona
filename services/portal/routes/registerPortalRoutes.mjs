@@ -4,7 +4,7 @@
  * - app/createPortalApp.mjs
  * - app/ravenTitleVolumeMap.mjs
  * - tests/portalApp.test.mjs
- * Times this file has been edited: 17
+ * Times this file has been edited: 18
  */
 
 import crypto from 'node:crypto';
@@ -29,6 +29,48 @@ const normalizeError = (error, fallbackStatus = 500) => {
     const message = error.message || 'Unexpected error.';
 
     return buildError(status, message, error.body ?? error.details ?? null);
+};
+
+/**
+ * Normalizes Portal's Kavita scan failures into operator-friendly messages.
+ *
+ * @param {object} options - Named function inputs.
+ * @returns {*} The function result.
+ */
+const normalizeKavitaScanError = ({
+                                      requestedName,
+                                      resolvedLibraryId = null,
+                                      error,
+                                  } = {}) => {
+    const normalized = normalizeError(error);
+    const libraryName = normalizeString(requestedName) || 'requested library';
+
+    if (normalized.status === 401 || normalized.status === 403) {
+        const prefix = resolvedLibraryId != null
+            ? `Kavita denied the scan for ${libraryName}`
+            : `Portal could not prepare a Kavita scan for ${libraryName}`;
+        return buildError(
+            normalized.status,
+            `${prefix}. The configured KAVITA_API_KEY must belong to an admin-capable Kavita account.`,
+            normalized.details,
+        );
+    }
+
+    if (normalized.status === 404) {
+        const prefix = resolvedLibraryId != null
+            ? `Portal resolved ${libraryName} (id=${resolvedLibraryId}), but Kavita could not find it when the scan was queued.`
+            : `Library ${libraryName} was not found.`;
+        return buildError(normalized.status, prefix, normalized.details);
+    }
+
+    const message = normalizeString(normalized.message);
+    return buildError(
+        normalized.status,
+        message
+            ? `Failed to queue a Kavita scan for ${libraryName}: ${message}`
+            : `Failed to queue a Kavita scan for ${libraryName}.`,
+        normalized.details,
+    );
 };
 
 const KAVITA_ROLE_DESCRIPTIONS = new Map([
@@ -897,29 +939,37 @@ export const registerPortalRoutes = ({
         }
 
         const force = req.body?.force === true;
+        let resolvedLibrary = null;
 
         try {
             const libraries = await kavita?.fetchLibraries?.() ?? [];
-            const library = libraries.find((entry) =>
+            resolvedLibrary = libraries.find((entry) =>
                 normalizeString(entry?.name).toLowerCase() === name.toLowerCase(),
             ) ?? null;
 
-            if (!library?.id) {
+            if (!resolvedLibrary?.id) {
                 res.status(404).json({error: `Library ${name} was not found.`});
                 return;
             }
 
-            const result = await kavita?.scanLibrary?.(library.id, {force});
+            const result = await kavita?.scanLibrary?.(resolvedLibrary.id, {force});
             res.json({
                 success: true,
                 name,
                 force,
-                library,
+                library: resolvedLibrary,
                 result: result ?? null,
             });
         } catch (error) {
-            const normalized = normalizeError(error);
-            errMSG(`[Portal] Failed to scan Kavita library ${name}: ${normalized.message}`);
+            const normalized = normalizeKavitaScanError({
+                requestedName: name,
+                resolvedLibraryId: resolvedLibrary?.id ?? null,
+                error,
+            });
+            errMSG(
+                `[Portal] Failed to scan Kavita library ${name}`
+                + `${resolvedLibrary?.id ? ` (id=${resolvedLibrary.id})` : ''}: ${normalized.message}`,
+            );
             res.status(normalized.status).json({error: normalized.message, details: normalized.details});
         }
     });
@@ -1611,6 +1661,38 @@ export const registerPortalRoutes = ({
         } catch (error) {
             const normalized = normalizeError(error);
             errMSG(`[Portal] Failed to consume Kavita login token: ${normalized.message}`);
+            res.status(normalized.status).json({error: normalized.message, details: normalized.details});
+        }
+    });
+
+    app.post('/api/portal/discord/onboarding-message/test', async (req, res) => {
+        const channelId = normalizeString(req.body?.channelId);
+        const rawContent = typeof req.body?.content === 'string' ? req.body.content : '';
+
+        if (!channelId) {
+            res.status(400).json({error: 'channelId must not be empty.'});
+            return;
+        }
+
+        if (!normalizeString(rawContent)) {
+            res.status(400).json({error: 'content must not be empty.'});
+            return;
+        }
+
+        if (typeof discord?.sendChannelMessage !== 'function') {
+            res.status(503).json({error: 'Discord messaging is not configured.'});
+            return;
+        }
+
+        try {
+            await discord.sendChannelMessage(channelId, {content: rawContent});
+            res.json({
+                ok: true,
+                channelId,
+            });
+        } catch (error) {
+            const normalized = normalizeError(error);
+            errMSG(`[Portal] Failed to send onboarding test message to channel ${channelId}: ${normalized.message}`);
             res.status(normalized.status).json({error: normalized.message, details: normalized.details});
         }
     });

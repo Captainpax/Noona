@@ -70,10 +70,10 @@ Warden brings up the bootstrap services that Moon needs for setup. If Moon does 
 Warden's health payload now includes readiness metadata.
 If `/health` responds with `ready: false`, the API process is up but bootstrap is still in progress, so brief setup
 catalog or install-preview retries are expected during first boot.
-After setup is complete, a normal Warden restart still comes back in minimal mode first.
-That means `noona-sage` and `noona-moon` are restored immediately, while the saved ecosystem waits for a manual start
-from Moon's `/bootScreen`.
-That boot screen is only for this post-restart minimal-mode handoff.
+After setup is complete, a normal Warden restart now brings back the core services first:
+`noona-mongo`, `noona-redis`, `noona-vault`, `noona-sage`, and `noona-moon`.
+If your saved setup includes additional managed apps, Warden then resumes them automatically.
+Moon's `/bootScreen` remains available only as a recovery or compatibility surface.
 Later single-service outages, failed probes, or temporarily stopped selected services should not send an already-started
 system back there.
 
@@ -102,6 +102,7 @@ If you leave Komf managed by Noona, Portal keeps its default internal `http://no
 persisting a custom override.
 Moon saves the setup snapshot before direct install so Warden can derive and apply the managed service plan from that
 persisted profile.
+Mongo, Redis, and Vault stay implicit in that public setup profile and are always included as part of the core stack.
 The managed Kavita plus Discord live preflight stays on the setup summary path, where those running services are
 available for browser-facing validation and handoff.
 When Portal or Komf already has the managed Kavita API key from install, Sage now reuses that installed key on the
@@ -110,13 +111,13 @@ If those live post-install sync calls fail after the stack is already installed,
 shows one-shot warnings there instead of trapping you on the install tab.
 Warden derives the managed service storage wiring internally instead of persisting raw `NOONA_DATA_ROOT` overrides per
 service.
-Once setup is complete, later Warden restarts intentionally land on Moon's public `/bootScreen` when the saved
-ecosystem is not already running.
-Use `Start ecosystem` there to trigger the same lifecycle order Warden uses for full startup.
-That boot screen now shows the required recovery services, the saved target services, and the page Moon will return to
+Once setup is complete, later Warden restarts should reopen Moon normally after the core stack and any saved optional
+services auto-resume.
+Use `/bootScreen` only if you intentionally need to trigger that recovery flow yourself.
+That recovery screen shows the core recovery services, the saved target services, and the page Moon will return to
 after the stack stabilizes.
-If a service fails later after the ecosystem has already been started for the current Warden session, Moon should stay
-in the normal app instead of treating that as a fresh boot-screen case.
+If a service fails later after the ecosystem has already been started, Moon should stay in the normal app instead of
+treating that as a fresh boot-screen case.
 
 ## 4. First Admin And Discord Notes
 
@@ -130,17 +131,43 @@ in the normal app instead of treating that as a fresh boot-screen case.
 - The Discord validation cards in setup and settings now include read-only slash-command diagnostics.
   Use those details to spot stale or duplicate global vs guild command registrations such as a duplicated
   `/subscribe` without needing shell access.
+- Moon's Discord settings also store the onboarding template and onboarding channel id that Portal uses for real
+  guild-member joins.
+  If your template omits `{user_mention}`, Portal prepends the new member mention automatically before posting.
+- That same Discord settings screen also stores the invite URL the signed-in home page uses for its support link.
+  If you leave it blank, Moon falls back to Noona's default Discord invite.
+- That same Discord settings screen also stores the optional chapter-release post toggle and channel id.
+  When enabled, Portal checks Raven every 15 minutes, groups newly finished chapters by title, and posts the title
+  summary plus Kavita link into that channel.
+  The first enable pass snapshots the current Raven history as the baseline so old downloads are not replayed into
+  Discord.
+- The onboarding card also includes `Send test`, which posts the current rendered preview and current channel draft to
+  Discord without saving first.
+- The Discord `/scan` command now returns the real Kavita scan error when possible.
+  If it says Portal's `KAVITA_API_KEY` needs admin scan access, update that key to one owned by an admin-capable
+  Kavita account instead of chasing Discord command registration first.
 - If you want one trusted Discord account to run Portal's private bulk queue command, set `DISCORD_SUPERUSER_ID` in
   Moon under `Admin -> Integrations -> Discord`.
 - The configured superuser can DM the bot `downloadall type:manga nsfw:false titlegroup:a`.
   Portal accepts `downloadall`, `/downloadall`, or `!downloadall` only in DMs and ignores the same syntax from anyone
   else.
+- Recommendation and subscription DMs now use Noona-branded wording instead of naming internal services.
+  Approved requests link back to the Moon request page, and the final recommendation ready message is only sent after
+  the title is actually available in Noona with a direct Kavita title link, even if the download step finished earlier.
 - On the finish or summary step, use the Discord login flow to create the first Noona admin session.
 - Managed Kavita admin credentials are separate. If you provide Kavita admin defaults during setup, Warden can seed the
   managed Kavita admin and API-key flow for you.
+- Managed Kavita no longer exposes Kavita's direct `/registration/register` first-admin page as a supported path.
+  If Kavita shows a managed setup wait message on `/login`, check the saved `KAVITA_ADMIN_USERNAME`,
+  `KAVITA_ADMIN_EMAIL`, and `KAVITA_ADMIN_PASSWORD` values in Moon and confirm `noona-kavita` finished booting in
+  Warden before asking readers to sign in.
 
 ## Signed-In Shell Music And Live Toasts
 
+- After setup is complete and you are signed into Moon, Home opens with a Noona dashboard welcome card that links to
+  `Start Reading`, the configured Discord invite, and `My requests` when the account has request access.
+  `Start Reading` now opens Kavita directly in the current tab instead of going through the separate Noona handoff
+  bridge.
 - After setup is complete and you are signed into Moon, the slide-out menu includes a `Music` card above `Display`.
 - Background music is enabled by default in the signed-in app shell only.
 - Mute state and volume are saved per browser in local storage, so each browser can keep its own preference.
@@ -174,13 +201,15 @@ Important paths under the storage root:
 - `warden/service-runtime-config.json`: runtime service overrides
 - `vault/`: shared Vault, Mongo, and Redis state used by the stack
 - `vault/tls/`: Warden-managed internal CA plus the Vault HTTPS certificate and key
-- `raven/`: download and library worker data
+- `raven/`: download and library data
 - `kavita/`: managed Kavita config
 - `komf/`: managed Komf config
 
 Raven's default chapter files stay chapter-only until Noona has explicit chapter-to-volume metadata for that chapter.
 If you later confirm metadata for a title, Raven's volume-map repair flow can rename those existing files to the real
 volume numbers.
+Deleting a title from Moon's title page now removes the managed Raven title folder before archiving the title entry, so
+use the per-file delete tools first when you only want to remove a few chapter archives.
 
 If you still have older `noona-settings.json` or `warden/setup-wizard-state.json` files from an earlier install,
 Warden migrates them into `wardenm/noona-settings.json` and removes the duplicates when it can.
@@ -207,6 +236,9 @@ container during bootstrap, it now treats that as a real startup error instead o
 Updates:
 
 - Use Moon's `Admin -> System -> Updates` for normal managed-image updates.
+- `Check now` can take up to about 2 minutes because Warden refreshes live registry digests before returning.
+- Single-service `Update` actions can take several minutes because Moon waits for the synchronous Docker pull and
+  optional restart to finish instead of cutting off early.
 - `AUTO_UPDATES=true` is optional if you want Warden to check startup images during boot.
 
 Restarts:
@@ -216,8 +248,8 @@ Restarts:
   returning.
 - Services that are running but do not expose a dedicated health endpoint now show as `No probe` in that monitor
   instead of surfacing as hard boot failures.
-- Seeing `/bootScreen` after a host or Warden reboot is expected when setup is complete but the saved ecosystem has not
-  been started yet.
+- Seeing `/bootScreen` after a host or Warden reboot is no longer the normal path; use it as a recovery tool when the
+  saved ecosystem did not auto-resume cleanly.
 - Seeing `/bootScreen` later because one selected service is unhealthy is not expected; troubleshoot the affected
   service from Moon or Warden instead of treating it as a fresh startup requirement.
 - Restart the Warden container itself when you update Warden or need to recover the control plane.
@@ -257,6 +289,8 @@ Also in Moon:
   registered in one guild but blocked by Portal's guild gate in another.
 - Discord validation now reports the detected global commands, guild commands, and duplicate command names to help
   diagnose `Unknown Integration` or stale registration issues.
+- That Discord screen also controls the optional chapter-release post channel.
+  When it is enabled, Portal posts grouped title updates every 15 minutes for newly finished Raven chapters.
 - That same Discord settings screen also carries the optional `DISCORD_SUPERUSER_ID` field for the private DM-only
   `downloadall` command.
 - `Admin -> Integrations -> Kavita` manages Kavita-related defaults and external link settings.
@@ -284,6 +318,10 @@ Moon settings or service links fail with a Sage backend error:
   issue and inspect the Sage logs before changing Moon `SAGE_BASE_URL`
 - if Moon is running in a custom or split topology, open `Admin -> System -> Overview`, set Moon `SAGE_BASE_URL` to a
   reachable Sage URL, then save and restart Moon
+- if the failure is specifically from `Admin -> System -> Updates`, distinguish updater timeouts from real Sage
+  reachability problems:
+  `Check now` now waits longer for Warden's registry refresh, and `Update` waits several minutes for Docker pulls plus
+  restarts before Moon times out that request
 
 Setup changes do not appear on disk:
 
@@ -318,10 +356,18 @@ Downloads, Kavita, or metadata flows fail after a reboot:
 - check service health and logs from Moon or Warden before changing settings by hand
 - if managed Kavita is enabled, expect Portal and Komf to reuse only validated Kavita plugin keys; stale recovered keys
   will now be replaced during setup or restore instead of being silently reused
+- if Portal's Discord `/scan` command reports a denied Kavita scan, verify Portal's `KAVITA_API_KEY` belongs to an
+  admin-capable Kavita account; a key that can list libraries is not always enough to queue admin-only scans
 - if Portal is configured to use an external Komf URL, metadata bridge errors should reference that external URL instead
   of telling you to restart `noona-komf`; troubleshoot the external Komf instance directly in that case
+- Raven now retries one immediate Kavita library ensure plus rescan after a completed download moves into place, so a
+  short-lived "library not found" race right after a fresh library is created should self-heal before you intervene
 - Raven now keeps fractional chapters such as `101.1` and `101.5` as separate chapters during queueing and sync, so
   seeing those alongside `101` is expected behavior rather than a duplicate-collapse bug
+- Moon's title-detail `Check new/missing` action now returns Raven's queued plan first and lets the live task card
+  carry the background progress.
+  If the page used to show `files` on disk but `indexed chapters: 0`, refresh the title page once before assuming the
+  chapter index is gone; Raven now rebuilds that index from the downloaded folder on title reads.
 
 PIA regions stay blank or Raven VPN shows no IP:
 
@@ -343,8 +389,8 @@ PIA regions stay blank or Raven VPN shows no IP:
   Read that message first because cleanup details may be appended after the original tunnel or route error.
 - when VPN is enabled, Raven now tries to establish the baseline tunnel automatically, so a queued download that says
   it is waiting on VPN should normally start on its own once the tunnel comes up
-- on Linux/process-worker installs, Raven no longer fails rotate or baseline auto-connect just because there were zero
-  active downloads to pause before the VPN transition
+- Raven no longer fails rotate or baseline auto-connect just because there were zero active downloads to pause before
+  the VPN transition
 - queued downloads waiting on VPN now react to fresh settings reads immediately.
   If you disable the VPN gate or change VPN settings to remove the wait condition, Raven should stop waiting without
   needing an extra cache-delay retry window.
@@ -364,9 +410,20 @@ PIA regions stay blank or Raven VPN shows no IP:
   a configuration error rather than a Raven runtime problem.
 - `Rotate now` still starts the VPN change in the background, but `Test login` waits for the actual probe result before
   returning.
+- Moon now gives `Test login` a longer request window because Raven's OpenVPN probe can take a while.
+  If that specific action times out, Moon should report a login-test timeout rather than a generic Sage-unreachable
+  error.
 - Moon's Downloads page is now active-first.
-  The top carousel and live list both reflect Raven's active queue, and each row's `Details` hover card carries the
-  richer queued/completed previews, timestamps, and VPN-blocked context.
+  The top rail now uses the same poster-card style as Moon's library page for active Raven tasks, while one shared
+  table below it keeps the live queue and the last 24 hours together.
+  Each row's `Details` hover card still carries the richer queued/completed previews, timestamps, and VPN-blocked
+  context.
+- Moon's downloader settings now use one serial Raven queue with one overall `Download speed limit` value instead of
+  worker lanes, per-slot rate limits, or CPU pinning.
+  Use `0` there for unlimited throughput.
+- `Add download` now includes an `Allow download without VPN` checkbox for one queue submission at a time.
+  Use it only when you intentionally want specific titles to bypass Raven's global `Only download when VPN is on`
+  gate.
 - if Moon's downloads page shows a queued job waiting on VPN, read the reported connection state and last error there
   first; use `Rotate now` from `Admin -> System -> Downloader` only if Raven is not recovering automatically
 - `Resume` on Moon's Downloads page still depends on Raven history containing paused or interrupted runs, even though

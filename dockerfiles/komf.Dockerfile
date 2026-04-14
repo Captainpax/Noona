@@ -24,6 +24,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /out/komf-app-all.jar ./komf-app-all.jar
+COPY utilities/etc/warden_runtime_bootstrap.py ./warden_runtime_bootstrap.py
 
 ENV LC_ALL=en_US.UTF-8
 ENV KOMF_CONFIG_DIR=/config
@@ -31,7 +32,8 @@ ENV PATH="/opt/apprise-venv/bin:${PATH}"
 
 EXPOSE 8085
 
-ENTRYPOINT ["java", "-jar", "komf-app-all.jar"]
+ENTRYPOINT ["python3", "/app/warden_runtime_bootstrap.py", "--"]
+CMD ["java", "-jar", "komf-app-all.jar"]
 
 LABEL org.opencontainers.image.url=https://github.com/Snd-R/komf \
       org.opencontainers.image.source=https://github.com/Snd-R/komf

@@ -3,7 +3,7 @@
 import {useEffect, useState} from "react";
 import {useRouter} from "next/navigation";
 import {Row, Spinner, Text} from "@once-ui-system/core";
-import {buildBootScreenHref, normalizeSetupStatus} from "./setupStatus.mjs";
+import {normalizeSetupStatus} from "./setupStatus.mjs";
 
 type SetupStatus = {
     completed: boolean;
@@ -33,12 +33,7 @@ export function SetupWizardGate({children}: SetupWizardGateProps) {
 
                 const completed = setupJson?.completed === true;
                 if (completed) {
-                    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}` || "/";
-                    router.replace(
-                        setupJson?.manualBootRequired === true
-                            ? buildBootScreenHref(returnTo)
-                            : "/",
-                    );
+                    router.replace("/");
                     return;
                 }
                 setReady(true);

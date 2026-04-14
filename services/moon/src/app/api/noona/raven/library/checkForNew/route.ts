@@ -6,10 +6,11 @@ export const dynamic = "force-dynamic";
 
 export async function POST() {
     try {
+        const timeout = {timeoutMs: 120_000} as const;
         const {status, payload} = await sageJson("/api/raven/library/checkForNew", {
             method: "POST",
             headers: await withNoonaAuthHeaders(),
-        });
+        }, timeout);
         return NextResponse.json(payload, {status});
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

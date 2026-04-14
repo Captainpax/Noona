@@ -56,19 +56,23 @@
 - [SettingsService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/settings/SettingsService.java)
   caches Vault-backed settings for 5 seconds.
 - Naming settings live under key `downloads.naming`.
-- Worker settings live under key `downloads.workers`.
+- Download-limit settings live under key `downloads.limits`.
 - VPN settings live under key `downloads.vpn`.
 - Raven also exposes a fresh VPN-settings read plus cache invalidation path for VPN-critical flows.
   Manual rotate validation, scheduler auto-connect, status reads, and VPN-gated download waits should use that
   fresh path instead of waiting for the normal 5-second cache to expire.
 - Missing or unreadable settings fall back to defaults and log warnings with cooldowns instead of failing startup.
 
-## Worker Settings
+## Download Limits Settings
 
-- Worker settings store:
-  `threadRateLimitsKbps` and `cpuCoreIds`
-- The lists are normalized to match the configured download thread count.
-- `0` disables per-thread rate limiting and `-1` means no CPU pinning for that worker slot.
+- Download-limit settings store:
+  `overallSpeedLimitKbps`
+- `0` disables throttling and leaves Raven unlimited.
+- Raven applies this as a single downloader-wide cap because active download concurrency is fixed at `1`.
+- If `downloads.limits` is missing, Raven derives a compatibility fallback from legacy
+  `downloads.workers.threadRateLimitsKbps` by summing positive entries.
+- `RAVEN_DOWNLOAD_THREADS` may still exist in old environments, but it no longer changes effective download
+  concurrency.
 
 ## VPN Settings
 
@@ -115,5 +119,5 @@
 - If you touch file movement, promotion, rename logic, or title-folder resolution, read both
   [DownloadService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/DownloadService.java) and
   [LibraryService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/LibraryService.java).
-- If you touch status payloads, worker mode, or VPN flow, check Moon/Sage usage because those services surface Raven
-  state to admins.
+- If you touch status payloads, download limits, or VPN flow, check Moon/Sage usage because those services surface
+  Raven state to admins.

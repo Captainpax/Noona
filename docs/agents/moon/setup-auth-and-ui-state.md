@@ -29,12 +29,10 @@
 
 - `SetupWizardGate` keeps `/setupwizard` and `/setupwizard/summary` available only while setup is incomplete.
 - `SetupModeGate` keeps the main application behind setup completion and redirects to `/setupwizard` otherwise.
-- When setup is complete but `manualBootRequired === true`, `SetupModeGate`, `SetupWizardGate`, and `LoginPage`
-  redirect to `/bootScreen?returnTo=...` instead of continuing into the wizard or normal signed-in flow.
 - `/bootScreen` is intentionally public and shellless.
-  It is the only post-setup unauthenticated path that can trigger the saved ecosystem start when manual boot is
-  currently required.
-- That route is only for the post-restart minimal-mode handoff.
+  It is the explicit recovery and compatibility path for starting the saved ecosystem when auto-resume did not already
+  settle the stack.
+- That route is no longer the normal post-restart path for completed installs.
   Later single-service outages or failed probes should keep users in the normal app and troubleshooting flows.
 - `AuthGate` is separate.
   It checks `/api/noona/auth/status`, redirects to `/login` on `401`, and can enforce individual Moon permissions.
@@ -60,7 +58,8 @@
 - Debug mode changes the UI surface.
   Advanced and derived env keys become more visible only when setup status says debug is enabled.
 - `ALWAYS_RUNNING` currently includes `noona-moon` and `noona-sage`.
-  Those are not normal toggles in the setup service grid.
+  Mongo, Redis, and Vault are still implicit because Warden marks them as required core services instead of exposing
+  them as normal public toggles in the setup profile.
 - `GET /api/noona/setup/status` now carries lifecycle metadata in addition to setup completion:
   `selectionMode`,
   `selectedServices`,
@@ -88,9 +87,8 @@
   setup completion,
   existing session,
   and Discord OAuth config availability.
-- Login also respects `manualBootRequired`.
-  Completed installs that still need the saved ecosystem started should route to `/bootScreen`, not proceed into the
-  normal app shell.
+- Login should keep completed installs in the normal flow on healthy restarts.
+  `/bootScreen` is reserved for explicit recovery, not the default completed-install redirect.
 - Moon's Discord callback route forwards the OAuth exchange to Sage and writes `noona_session` when a token is
   returned.
 - The callback page appends `discordTest=success` or `discordAuth=success` to the return target so the summary or
@@ -109,9 +107,6 @@
 - `AppShell.tsx` decides whether Moon shows setup navigation, main navigation, or no shell chrome at all.
 - After setup completes, the main shell keeps direct links for `Home`, `Library`, and `Downloads`, exposes request and
   admin groups as the only menus, and surfaces `Add download` as a header action instead of burying it in navigation.
-- When `manualBootRequired === true`, AppShell suppresses the normal signed-in shell and nav chrome even if a valid
-  session exists.
-  That keeps the boot-screen and reboot monitor flows isolated from the normal app frame.
 - Setup stays isolated as its own guided mode until completion.
   Do not mix setup entries back into the normal app shell outside the admin resume/setup-summary affordances.
 - Current shellless routes are:
@@ -160,7 +155,7 @@
 - Boot-screen start, signed-in ecosystem start, signed-in ecosystem restart, and update-all should all write the same
   monitor session shape before navigating into `/rebooting`.
 - The boot screen is intentionally a short startup brief.
-  It should show the required recovery services, the saved target services, and the return destination before the
+  It should show the core recovery services, the saved target services, and the return destination before the
   lifecycle request is sent.
 - Required services are operation-aware but not hard-coded to only the old control-plane update flow.
   `noona-warden`, `noona-sage`, and `noona-moon` are always required, while `noona-mongo`, `noona-redis`, and
@@ -172,8 +167,8 @@
   Update-service queues use the priority ordering from `rebootMonitorSession.ts`, while non-update lifecycle targets
   preserve the requested service order.
 - `/api/noona/boot/start` is a narrow public proxy to Sage's manual boot route.
-  It must stay unauthenticated only while `manualBootRequired === true`; signed-in ecosystem start and restart still go
-  through the admin-protected settings routes.
+  It remains useful for explicit recovery, while signed-in ecosystem start and restart still go through the
+  admin-protected settings routes.
 - Do not re-derive `manualBootRequired` inside Moon from live health or service-catalog state.
   Redirect behavior should follow Sage's mirrored Warden flag only.
 - If update or restart UX changes, keep the session format and `/rebooting` page aligned.

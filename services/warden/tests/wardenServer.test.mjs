@@ -8,9 +8,18 @@ import {normalizeSetupProfileSnapshot, toPublicSetupSnapshot} from '../core/setu
 import {WardenConflictError, WardenNotFoundError, WardenValidationError,} from '../core/wardenErrors.mjs';
 
 const SAGE_TOKEN = 'sage-test-token';
+const MOON_TOKEN = 'moon-test-token';
 const PORTAL_TOKEN = 'portal-test-token';
 const TEST_ENV = {
-    WARDEN_API_TOKEN_MAP: `noona-sage:${SAGE_TOKEN},noona-portal:${PORTAL_TOKEN}`,
+    WARDEN_API_TOKEN_MAP: [
+        `noona-sage:${SAGE_TOKEN}`,
+        `noona-moon:${MOON_TOKEN}`,
+        `noona-vault:vault-test-token`,
+        `noona-portal:${PORTAL_TOKEN}`,
+        'noona-raven:raven-test-token',
+        'noona-kavita:kavita-test-token',
+        'noona-komf:komf-test-token',
+    ].join(','),
 };
 
 const listen = async (options = {}) => {
@@ -50,6 +59,50 @@ const wardenFetch = (baseUrl, path, options = {}, token = SAGE_TOKEN) => fetch(`
         ...(token ? {authorization: `Bearer ${token}`} : {}),
         ...(options?.headers ?? {}),
     },
+});
+
+test('Warden server uses the longer default request timeout for updater pulls and restarts', async (t) => {
+    const warden = {
+        listServices: async () => [],
+        installServices: async () => [],
+    };
+
+    const {server} = startWardenServer({
+        warden,
+        env: TEST_ENV,
+        port: 0,
+    });
+
+    await once(server, 'listening');
+    t.after(() => closeServer(server));
+
+    assert.equal(server.requestTimeout, 600000);
+    assert.equal(server.timeout, 600000);
+    assert.equal(server.headersTimeout, 15000);
+});
+
+test('WARDEN_API_REQUEST_TIMEOUT_MS still overrides the longer default request timeout', async (t) => {
+    const warden = {
+        listServices: async () => [],
+        installServices: async () => [],
+    };
+
+    const {server} = startWardenServer({
+        warden,
+        env: {
+            ...TEST_ENV,
+            WARDEN_API_REQUEST_TIMEOUT_MS: '45000',
+            WARDEN_API_HEADERS_TIMEOUT_MS: '60000',
+        },
+        port: 0,
+    });
+
+    await once(server, 'listening');
+    t.after(() => closeServer(server));
+
+    assert.equal(server.requestTimeout, 45000);
+    assert.equal(server.timeout, 45000);
+    assert.equal(server.headersTimeout, 45000);
 });
 
 test('GET /health reports readiness metadata before init completes', async (t) => {
@@ -562,7 +615,7 @@ test('POST /api/setup/config returns 409 for apply conflicts', async (t) => {
     });
 });
 
-test('GET /api/services/:name/config keeps secrets masked by default and only exposes them to Sage when requested', async (t) => {
+test('GET /api/services/:name/config keeps secrets masked by default while allowing Sage and the matching service to request full config', async (t) => {
     const warden = {
         getServiceConfig() {
             return {
@@ -630,11 +683,36 @@ test('GET /api/services/:name/config keeps secrets masked by default and only ex
         },
     });
 
-    const forbiddenResponse = await wardenFetch(
+    const selfServiceResponse = await wardenFetch(
         baseUrl,
         '/api/services/noona-portal/config?includeSecrets=true',
         {},
         PORTAL_TOKEN,
+    );
+    assert.equal(selfServiceResponse.status, 200);
+    assert.deepEqual(await selfServiceResponse.json(), {
+        env: {
+            KAVITA_BASE_URL: 'http://noona-kavita:5000',
+            KAVITA_API_KEY: 'existing-service-key',
+        },
+        envConfig: [
+            {key: 'KAVITA_BASE_URL', sensitive: false},
+            {key: 'KAVITA_API_KEY', sensitive: true, defaultValue: '********', configured: true},
+        ],
+        runtimeConfig: {
+            hostPort: 3003,
+            env: {
+                KAVITA_BASE_URL: 'http://noona-kavita:5000',
+                KAVITA_API_KEY: 'runtime-service-key',
+            },
+        },
+    });
+
+    const forbiddenResponse = await wardenFetch(
+        baseUrl,
+        '/api/services/noona-portal/config?includeSecrets=true',
+        {},
+        MOON_TOKEN,
     );
     assert.equal(forbiddenResponse.status, 403);
     assert.deepEqual(await forbiddenResponse.json(), {

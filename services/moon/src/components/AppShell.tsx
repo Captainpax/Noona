@@ -239,7 +239,6 @@ export function AppShell({children}: { children: React.ReactNode }) {
 
     const shellSuppressed = isMoonShellSuppressedPath(pathname);
     const setupCompleted = setupState?.completed === true;
-    const manualBootRequired = setupState?.manualBootRequired === true;
     const setupLoading = setupState == null;
     const permissions = accountUser?.permissions ?? null;
     const canAccessLibrary = hasMoonPermission(permissions, "library_management");
@@ -258,9 +257,9 @@ export function AppShell({children}: { children: React.ReactNode }) {
                 ? "/mysubscriptions"
                 : "/";
     const canAccessSettings = canAccessEcosystemSettings || canManageUsers;
-    const showSetupNav = !shellSuppressed && !manualBootRequired && setupCompleted === false;
-    const showMainNav = !shellSuppressed && !manualBootRequired && setupCompleted === true;
-    const showShellChrome = !shellSuppressed && !manualBootRequired;
+    const showSetupNav = !shellSuppressed && setupCompleted === false;
+    const showMainNav = !shellSuppressed && setupCompleted === true;
+    const showShellChrome = !shellSuppressed;
     const setupNavHref = pathname.startsWith("/setupwizard/summary") ? "/setupwizard/summary" : "/setupwizard";
     const showSetupSummaryLink = pathname.startsWith("/setupwizard");
 
@@ -305,7 +304,7 @@ export function AppShell({children}: { children: React.ReactNode }) {
         let cancelled = false;
 
         const loadAuth = async () => {
-            if (setupCompleted !== true || shellSuppressed || manualBootRequired) {
+            if (setupCompleted !== true || shellSuppressed) {
                 setAccountUser(null);
                 return;
             }
@@ -332,7 +331,7 @@ export function AppShell({children}: { children: React.ReactNode }) {
         return () => {
             cancelled = true;
         };
-    }, [manualBootRequired, pathname, setupCompleted, shellSuppressed]);
+    }, [pathname, setupCompleted, shellSuppressed]);
 
     useEffect(() => {
         menuOpenRef.current = menuOpen;

@@ -4,7 +4,7 @@
  * - commands/index.mjs
  * - discord/interactionRouter.mjs
  * - tests/discordCommands.test.mjs
- * Times this file has been edited: 3
+ * Times this file has been edited: 5
  */
 
 import {MessageFlags} from 'discord.js';
@@ -17,11 +17,11 @@ import {MessageFlags} from 'discord.js';
 export const createDingCommand = () => ({
     definition: {
         name: 'ding',
-        description: 'Check if the Noona Portal bot is awake.',
+        description: 'Check if the Noona bot is awake.',
     },
     execute: async interaction => {
         await interaction.reply?.({
-            content: 'Dong! Portal is online.',
+            content: 'Dong! Noona is online.',
             flags: MessageFlags.Ephemeral,
         });
     },

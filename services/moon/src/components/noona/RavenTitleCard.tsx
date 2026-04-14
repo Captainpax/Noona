@@ -1,4 +1,5 @@
-import {Badge, Card, Column, Heading, Row, SmartLink, Text} from "@once-ui-system/core";
+import {Badge, Heading, Row, Text} from "@once-ui-system/core";
+import {RAVEN_POSTER_CARD_HEIGHT, RAVEN_POSTER_CARD_WIDTH, RavenPosterCardShell,} from "./RavenPosterCardShell";
 
 export type RavenTitleCardEntry = {
     title?: string | null;
@@ -11,8 +12,8 @@ export type RavenTitleCardEntry = {
     chaptersDownloaded?: number | null;
 };
 
-export const RAVEN_TITLE_CARD_WIDTH = 240;
-export const RAVEN_TITLE_CARD_HEIGHT = 340;
+export const RAVEN_TITLE_CARD_WIDTH = RAVEN_POSTER_CARD_WIDTH;
+export const RAVEN_TITLE_CARD_HEIGHT = RAVEN_POSTER_CARD_HEIGHT;
 
 const normalizeString = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -38,61 +39,15 @@ export function RavenTitleCard({entry, clickable = true}: RavenTitleCardProps) {
         ? `${downloadTotal}/${chapterCount}`
         : `${downloadTotal}`;
     const href = uuid ? `/libraries/${encodeURIComponent(uuid)}` : "/libraries";
-
-    const card = (
-        <Card
-            background="surface"
-            border="neutral-alpha-weak"
-            padding="0"
-            radius="l"
-            fillWidth
-            style={{
-                position: "relative",
-                overflow: "hidden",
-                width: "100%",
-                height: RAVEN_TITLE_CARD_HEIGHT,
-            }}
-        >
-            {coverUrl ? (
-                <img
-                    src={coverUrl}
-                    alt={`${title} cover`}
-                    style={{
-                        position: "absolute",
-                        inset: 0,
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                    }}
-                    loading="lazy"
-                />
-            ) : (
-                <Row
-                    fill
-                    background="neutral-alpha-weak"
-                    style={{
-                        position: "absolute",
-                        inset: 0,
-                    }}
-                />
-            )}
-
-            <Column
-                fill
-                style={{
-                    position: "absolute",
-                    inset: 0,
-                    justifyContent: "space-between",
-                }}
-            >
-                <Column
-                    gap="8"
-                    padding="12"
-                    background="overlay"
-                    style={{
-                        background: "linear-gradient(180deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.15) 100%)",
-                    }}
-                >
+    return (
+        <RavenPosterCardShell
+            title={title}
+            coverUrl={coverUrl}
+            mediaAlt={`${title} cover`}
+            clickable={clickable}
+            href={href}
+            topContent={(
+                <>
                     <Row horizontal="between" vertical="center" gap="8" style={{flexWrap: "wrap"}}>
                         {type && (
                             <Badge background="neutral-alpha-weak" onBackground="neutral-strong">
@@ -122,49 +77,23 @@ export function RavenTitleCard({entry, clickable = true}: RavenTitleCardProps) {
                     <Text onBackground="neutral-weak" variant="body-default-xs">
                         Downloaded: {chapterTotalText}
                     </Text>
-                </Column>
-
-                <Row
-                    padding="12"
-                    background="overlay"
+                </>
+            )}
+            bottomContent={(
+                <Text
+                    onBackground="neutral-weak"
+                    variant="body-default-xs"
                     style={{
-                        background: "linear-gradient(0deg, rgba(0, 0, 0, 0.78) 0%, rgba(0, 0, 0, 0) 100%)",
+                        minWidth: 0,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 1,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
                     }}
                 >
-                    <Text
-                        onBackground="neutral-weak"
-                        variant="body-default-xs"
-                        style={{
-                            minWidth: 0,
-                            display: "-webkit-box",
-                            WebkitLineClamp: 1,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                        }}
-                    >
-                        {lastDownloaded ? `Last: ${lastDownloaded}` : uuid || "No chapter metadata yet"}
-                    </Text>
-                </Row>
-            </Column>
-        </Card>
-    );
-
-    if (!clickable) {
-        return (
-            <Column fillWidth aria-disabled="true" style={{width: "100%"}}>
-                {card}
-            </Column>
-        );
-    }
-
-    return (
-        <SmartLink
-            href={href}
-            unstyled
-            fillWidth
-            style={{display: "block", width: "100%"}}
-        >
-            {card}
-        </SmartLink>
+                    {lastDownloaded ? `Last: ${lastDownloaded}` : uuid || "No chapter metadata yet"}
+                </Text>
+            )}
+        />
     );
 }

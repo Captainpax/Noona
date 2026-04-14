@@ -4,7 +4,7 @@
  * - commands/index.mjs
  * - commands/utils.mjs
  * - tests/discordCommands.test.mjs
- * Times this file has been edited: 3
+ * Times this file has been edited: 6
  */
 
 import {ApplicationCommandOptionType, MessageFlags} from 'discord.js';
@@ -14,6 +14,37 @@ const MAX_AUTOCOMPLETE_RESULTS = 25;
 const MAX_LISTED_LIBRARIES = 10;
 
 const normalizeValue = value => (typeof value === 'string' ? value.trim() : '');
+
+/**
+ * Extracts an HTTP-like status code from a Portal/Kavita error.
+ *
+ * @param {*} error - Input passed to the function.
+ * @returns {*} The function result.
+ */
+const extractErrorStatus = error => {
+    const parsed = Number.parseInt(String(error?.status ?? ''), 10);
+    return Number.isInteger(parsed) ? parsed : null;
+};
+
+/**
+ * Extracts a friendly message from a Portal/Kavita error.
+ *
+ * @param {*} error - Input passed to the function.
+ * @returns {*} The function result.
+ */
+const extractErrorMessage = error => {
+    const direct = normalizeValue(error?.message);
+    const fromBody = normalizeValue(error?.body?.message) || normalizeValue(error?.body?.error);
+    const candidate = direct || fromBody;
+    if (!candidate) {
+        return '';
+    }
+
+    return candidate
+        .replace(/^Kavita request failed with status \d+:\s*/i, '')
+        .replace(/^Kavita request failed with status \d+\.?$/i, '')
+        .trim();
+};
 
 const resolveLibraryName = library =>
     normalizeValue(library?.name)
@@ -47,6 +78,49 @@ const findLibraryMatch = (libraries, rawValue) => {
 };
 
 /**
+ * Builds a user-facing error for library list lookups.
+ *
+ * @param {*} error - Input passed to the function.
+ * @returns {*} The function result.
+ */
+const describeLibraryFetchFailure = error => {
+    const status = extractErrorStatus(error);
+    if (status === 401 || status === 403) {
+        return 'Noona could not load library options from Kavita. Ask a server admin to verify Portal\'s `KAVITA_API_KEY` is valid.';
+    }
+
+    const message = extractErrorMessage(error);
+    return message
+        ? `Noona could not load library options from Kavita: ${message}`
+        : 'Noona could not load library options from Kavita right now. Check the Portal logs and Kavita connection settings.';
+};
+
+/**
+ * Builds a user-facing error for a library scan request.
+ *
+ * @param {*} error - Input passed to the function.
+ * @param {*} libraryName - Input passed to the function.
+ * @returns {*} The function result.
+ */
+const describeLibraryScanFailure = (error, libraryName) => {
+    const status = extractErrorStatus(error);
+    const resolvedLibraryName = normalizeValue(libraryName) || 'that Noona library';
+
+    if (status === 401 || status === 403) {
+        return `Noona could not refresh **${resolvedLibraryName}** because Kavita denied the scan request. Ask a server admin to verify Portal's \`KAVITA_API_KEY\` belongs to an admin-capable Kavita account.`;
+    }
+
+    if (status === 404) {
+        return `Noona could not refresh **${resolvedLibraryName}** because Kavita could not find that library yet. Try again in a moment.`;
+    }
+
+    const message = extractErrorMessage(error);
+    return message
+        ? `Noona could not refresh **${resolvedLibraryName}**: ${message}`
+        : `Noona could not refresh **${resolvedLibraryName}** right now. Check the Portal logs and Kavita connection settings.`;
+};
+
+/**
  * Creates scan command.
  *
  * @param {object} options - Named function inputs.
@@ -57,18 +131,18 @@ export const createScanCommand = ({
                                   } = {}) => ({
     definition: {
         name: 'scan',
-        description: 'Trigger a Kavita scan for a library.',
+        description: 'Refresh a Noona library.',
         options: [
             {
                 name: 'library',
-                description: 'Library to scan in Kavita.',
+                description: 'Library to refresh in Noona.',
                 type: ApplicationCommandOptionType.String,
                 required: true,
                 autocomplete: true,
             },
             {
                 name: 'force',
-                description: 'Force a full scan for the selected library.',
+                description: 'Force a full refresh for the selected library.',
                 type: ApplicationCommandOptionType.Boolean,
                 required: false,
             },
@@ -105,14 +179,21 @@ export const createScanCommand = ({
         const libraryValue = normalizeValue(rawLibrary);
 
         if (!libraryValue) {
-            await respondWithError(interaction, 'Choose a Kavita library to scan.');
+            await respondWithError(interaction, 'Choose a Noona library to refresh.');
             return;
         }
 
-        const libraries = await kavita.fetchLibraries();
+        let libraries;
+        try {
+            libraries = await kavita.fetchLibraries();
+        } catch (error) {
+            await respondWithError(interaction, describeLibraryFetchFailure(error));
+            return;
+        }
+
         if (!Array.isArray(libraries) || libraries.length === 0) {
             await interaction.editReply?.({
-                content: 'No Kavita libraries are available to scan.',
+                content: 'No Noona libraries are available to refresh.',
             });
             return;
         }
@@ -126,16 +207,21 @@ export const createScanCommand = ({
 
             await interaction.editReply?.({
                 content: available
-                    ? `Could not find that Kavita library. Available libraries: ${available}`
-                    : 'Could not find that Kavita library.',
+                    ? `Could not find that Noona library. Available libraries: ${available}`
+                    : 'Could not find that Noona library.',
             });
             return;
         }
 
-        await kavita.scanLibrary(library.id, {force});
+        try {
+            await kavita.scanLibrary(library.id, {force});
+        } catch (error) {
+            await respondWithError(interaction, describeLibraryScanFailure(error, resolveLibraryName(library)));
+            return;
+        }
 
         await interaction.editReply?.({
-            content: `Queued a ${force ? 'forced ' : ''}Kavita scan for **${resolveLibraryName(library)}**.`,
+            content: `Queued a ${force ? 'forced ' : ''}Noona library refresh for **${resolveLibraryName(library)}**.`,
         });
     },
 });

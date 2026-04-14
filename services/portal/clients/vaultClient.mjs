@@ -14,6 +14,7 @@ import {buildTrustedFetchOptionsForUrl} from '../../../utilities/etc/tlsTrust.mj
 const DEFAULT_TIMEOUT = 10000;
 const DEFAULT_RECOMMENDATIONS_COLLECTION = 'portal_recommendations';
 const DEFAULT_SUBSCRIPTIONS_COLLECTION = 'portal_subscriptions';
+const DEFAULT_SETTINGS_COLLECTION = 'noona_settings';
 const DEFAULT_HANDLE_RETRY_ATTEMPTS = 3;
 
 const buildUrl = (baseUrl, path) => new URL(path, baseUrl).toString();
@@ -349,6 +350,34 @@ export const createVaultClient = ({
         });
     };
 
+    const readSetting = async ({
+                                   collection = DEFAULT_SETTINGS_COLLECTION,
+                                   key,
+                               } = {}) => {
+        const normalizedCollection = typeof collection === 'string' ? collection.trim() : '';
+        const normalizedKey = typeof key === 'string' ? key.trim() : '';
+        if (!normalizedCollection) {
+            throw new Error('Settings collection must be a non-empty string.');
+        }
+        if (!normalizedKey) {
+            throw new Error('Settings key must be a non-empty string.');
+        }
+
+        const payload = await request('/v1/vault/handle', {
+            method: 'POST',
+            body: {
+                storageType: 'mongo',
+                operation: 'findOne',
+                payload: {
+                    collection: normalizedCollection,
+                    query: {key: normalizedKey},
+                },
+            },
+        });
+
+        return payload?.data && typeof payload.data === 'object' ? payload.data : null;
+    };
+
     const redisSet = async (key, value, {ttl} = {}) => {
         const normalizedKey = typeof key === 'string' ? key.trim() : '';
         if (!normalizedKey) {
@@ -475,6 +504,7 @@ export const createVaultClient = ({
         storeSubscription,
         findSubscriptions,
         updateSubscription,
+        readSetting,
         redisSet,
         redisGet,
         redisDel,

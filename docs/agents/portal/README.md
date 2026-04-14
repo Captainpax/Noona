@@ -72,6 +72,7 @@ contracts.
 
 - If Discord onboarding, command access, recommendation behavior, or Kavita handoff changes, update Moon/admin docs in
   the same change.
+  Join-triggered onboarding posts now depend on both the saved template and the saved onboarding channel id.
 - If route payloads change, update
   [portalApp.test.mjs](../../../services/portal/tests/portalApp.test.mjs) and any related command/notifier tests.
 - If a change expands Portal's Warden usage beyond read-only status/progress lookups, document that explicitly because

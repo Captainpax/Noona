@@ -1,35 +1,37 @@
 "use client";
 
-import {type ComponentProps, startTransition, useEffect, useEffectEvent, useMemo, useRef, useState,} from "react";
-import {
-    Badge,
-    Button,
-    Card,
-    Carousel,
-    Column,
-    Heading,
-    HoverCard,
-    ProgressBar,
-    RevealFx,
-    Row,
-    Spinner,
-    Text,
-} from "@once-ui-system/core";
+import {type ComponentProps, startTransition, useEffect, useEffectEvent, useMemo, useState,} from "react";
+import {Badge, Button, Card, Column, Heading, HoverCard, ProgressBar, Row, Spinner, Text,} from "@once-ui-system/core";
 import {AuthGate} from "./AuthGate";
+import {DownloadsCarousel} from "./DownloadsCarousel";
+import {SetupModeGate} from "./SetupModeGate";
+import type {
+    DownloadBucketFilter,
+    DownloadSortKey,
+    DownloadStatusFilter,
+    RavenVpnRuntimeStatus,
+    ResolvedTaskView,
+    SortDirection,
+} from "./downloadsTypes";
 import {
     countResumableHistoryTasks,
     describeTaskStatus,
+    describeTaskTime,
+    filterTaskViews,
     formatTaskListPreview,
+    getTaskProgressTone,
+    getTaskStatusBadgeBackground,
     parseErrorMessage,
-    resolveActiveTaskViews,
+    resolveCombinedTaskViews,
     selectCarouselTaskViews,
+    sortTaskViews,
 } from "./downloadsPageUtils.mjs";
-import {SetupModeGate} from "./SetupModeGate";
 import styles from "./DownloadsPage.module.scss";
 
 type RavenDownloadProgress = {
     taskId?: string | null;
     taskType?: string | null;
+    coverUrl?: string | null;
     title?: string | null;
     titleUuid?: string | null;
     queuedAt?: number | null;
@@ -49,19 +51,8 @@ type RavenDownloadProgress = {
     remainingChapterNumbers?: string[] | null;
     newChapterNumbers?: string[] | null;
     missingChapterNumbers?: string[] | null;
-    workerIndex?: number | null;
-    cpuCoreId?: number | null;
-    executionMode?: string | null;
     pauseRequested?: boolean | null;
     lastUpdated?: number | null;
-};
-
-type RavenVpnRuntimeStatus = {
-    enabled?: boolean;
-    connected?: boolean;
-    region?: string | null;
-    lastError?: string | null;
-    connectionState?: string | null;
 };
 
 type RavenDownloadSummary = {
@@ -74,36 +65,6 @@ type RavenActionResponse = {
     resumedTasks?: string[] | null;
 };
 
-type ResolvedTaskView = {
-    key: string;
-    titleName: string;
-    statusRaw: string;
-    status: string;
-    taskType: string;
-    current: string;
-    latestChapter: string;
-    message: string;
-    errorMessage: string;
-    total: number;
-    completed: number;
-    percent: number;
-    progressValue: number;
-    queued: string[];
-    remaining: string[];
-    newChapters: string[];
-    missingChapters: string[];
-    completedChapterNumbers: string[];
-    recovered: boolean;
-    recoveryState: string;
-    workerIndex: number | null;
-    cpuCoreId: number | null;
-    executionMode: string;
-    pauseRequested: boolean;
-    queuedAtLabel: string;
-    updatedAtLabel: string;
-    completedAtLabel: string;
-};
-
 type TaskStatusDetails = {
     text: string;
     tone: "neutral-weak" | "danger-strong";
@@ -112,56 +73,35 @@ type TaskStatusDetails = {
 const DOWNLOADS_POLL_MS = 1500;
 const SUMMARY_POLL_MS = 3000;
 const HISTORY_POLL_MS = 6000;
-const DOWNLOAD_LIST_LIMIT_OPTIONS = [10, 25, 50, 100] as const;
+const DOWNLOADS_CAROUSEL_INTERVAL_MS = 4500;
+
+const BUCKET_FILTERS: { value: DownloadBucketFilter; label: string }[] = [
+    {value: "all", label: "All"},
+    {value: "active", label: "Active"},
+    {value: "recentHistory", label: "Last 24h"},
+];
+
+const STATUS_FILTERS: { value: DownloadStatusFilter; label: string }[] = [
+    {value: "all", label: "All"},
+    {value: "downloading", label: "Downloading"},
+    {value: "queued", label: "Queued"},
+    {value: "recovering", label: "Recovering"},
+    {value: "needsAttention", label: "Needs attention"},
+];
+
+const SORT_OPTIONS: { value: DownloadSortKey; label: string }[] = [
+    {value: "newest", label: "Newest"},
+    {value: "status", label: "Status"},
+    {value: "progress", label: "Progress"},
+    {value: "title", label: "Title"},
+];
 
 type BadgeBackground = NonNullable<ComponentProps<typeof Badge>["background"]>;
 type ProgressTone = NonNullable<ComponentProps<typeof ProgressBar>["barBackground"]>;
 
 const normalizeString = (value: unknown): string => (typeof value === "string" ? value : "");
 
-const statusBadgeBackground = (statusRaw: string): BadgeBackground => {
-    const status = statusRaw.trim().toLowerCase();
-    if (status === "completed") return "success-alpha-weak";
-    if (status === "failed" || status === "interrupted") return "danger-alpha-weak";
-    if (status === "paused") return "warning-alpha-weak";
-    if (status === "recovering" || status === "downloading") return "brand-alpha-weak";
-    return "neutral-alpha-weak";
-};
-
-const progressBarTone = (statusRaw: string): ProgressTone => {
-    const status = statusRaw.trim().toLowerCase();
-    if (status === "completed") return "success-strong";
-    if (status === "failed" || status === "interrupted") return "danger-strong";
-    if (status === "paused") return "warning-strong";
-    if (status === "queued") return "neutral-strong";
-    return "brand-strong";
-};
-
-function DownloadTaskBadges({task}: { task: ResolvedTaskView }) {
-    return (
-        <Row gap="8" style={{flexWrap: "wrap"}}>
-            <Badge background="neutral-alpha-weak">
-                {task.completed}/{task.total || "?"} chapters
-            </Badge>
-            <Badge background="neutral-alpha-weak">
-                remaining {task.remaining.length}
-            </Badge>
-            <Badge background="neutral-alpha-weak">
-                {task.taskType || "download"}
-            </Badge>
-            {task.recovered && (
-                <Badge background="brand-alpha-weak">
-                    recovered
-                </Badge>
-            )}
-            {task.pauseRequested && (
-                <Badge background="warning-alpha-weak">
-                    pause queued
-                </Badge>
-            )}
-        </Row>
-    );
-}
+const progressSummary = (task: ResolvedTaskView) => `${task.completed}/${task.total || "?"} chapters`;
 
 function DownloadHoverDetails({
                                   task,
@@ -189,21 +129,11 @@ function DownloadHoverDetails({
                 </Column>
 
                 <Row gap="8" style={{flexWrap: "wrap"}}>
-                    <Badge background={statusBadgeBackground(task.statusRaw)}>
+                    <Badge background={getTaskStatusBadgeBackground(task.statusRaw) as BadgeBackground}>
                         {task.statusRaw}
                     </Badge>
-                    {task.workerIndex != null && (
-                        <Badge background="neutral-alpha-weak">
-                            worker {task.workerIndex + 1}
-                        </Badge>
-                    )}
-                    {task.cpuCoreId != null && (
-                        <Badge background="neutral-alpha-weak">
-                            CPU {task.cpuCoreId >= 0 ? task.cpuCoreId : "auto"}
-                        </Badge>
-                    )}
                     <Badge background="neutral-alpha-weak">
-                        {task.executionMode}
+                        {task.sourceLabel}
                     </Badge>
                 </Row>
 
@@ -254,122 +184,101 @@ function DownloadHoverDetails({
     );
 }
 
-function DownloadsCarouselSlide({
-                                    task,
-                                    statusDetails,
-                                }: {
+function DownloadTableRow({
+                              task,
+                              statusDetails,
+                          }: {
     task: ResolvedTaskView;
     statusDetails: TaskStatusDetails;
 }) {
     return (
-        <Card
-            fillWidth
-            background="surface"
-            border="neutral-alpha-weak"
-            padding="l"
-            radius="l"
-            className={styles.carouselSlideCard}
-        >
-            <Column gap={14}>
-                <Row horizontal="between" vertical="start" gap="12" s={{direction: "column"}}>
-                    <Column gap={6} style={{minWidth: 0}}>
-                        <Text variant="label-default-s" onBackground="neutral-weak">
-                            Active spotlight
-                        </Text>
-                        <Heading as="h3" variant="heading-strong-l" wrap="balance">
-                            {task.titleName}
-                        </Heading>
-                    </Column>
-                    <Badge background={statusBadgeBackground(task.statusRaw)}>
+        <tr className={styles.tableRow}>
+            <td className={styles.tableCell}>
+                <Column gap={6} style={{minWidth: "14rem"}}>
+                    <Text variant="body-strong-s" wrap="balance">
+                        {task.titleName}
+                    </Text>
+                    <Row gap={6} style={{flexWrap: "wrap"}}>
+                        {task.taskType && (
+                            <Badge background="neutral-alpha-weak">
+                                {task.taskType}
+                            </Badge>
+                        )}
+                        {task.recovered && (
+                            <Badge background="brand-alpha-weak">
+                                recovered
+                            </Badge>
+                        )}
+                        {task.pauseRequested && (
+                            <Badge background="warning-alpha-weak">
+                                pause queued
+                            </Badge>
+                        )}
+                    </Row>
+                </Column>
+            </td>
+            <td className={styles.tableCell}>
+                <Badge
+                    background={(task.source === "active" ? "brand-alpha-weak" : "neutral-alpha-weak") as BadgeBackground}
+                >
+                    {task.sourceLabel}
+                </Badge>
+            </td>
+            <td className={styles.tableCell}>
+                <Row gap={6} style={{flexWrap: "wrap"}}>
+                    <Badge background={getTaskStatusBadgeBackground(task.statusRaw) as BadgeBackground}>
                         {task.statusRaw}
                     </Badge>
                 </Row>
-
-                <Text onBackground={statusDetails.tone} variant="body-default-s" wrap="balance">
-                    {statusDetails.text}
-                </Text>
-
-                <DownloadTaskBadges task={task}/>
-
-                <ProgressBar
-                    fillWidth
-                    value={task.progressValue}
-                    label={false}
-                    barBackground={progressBarTone(task.statusRaw)}
-                    className={styles.progressBarLarge}
-                />
-            </Column>
-        </Card>
-    );
-}
-
-function ActiveDownloadRow({
-                               task,
-                               statusDetails,
-                               revealedByDefault,
-                               delay,
-                           }: {
-    task: ResolvedTaskView;
-    statusDetails: TaskStatusDetails;
-    revealedByDefault: boolean;
-    delay: number;
-}) {
-    return (
-        <RevealFx
-            fillWidth
-            speed="fast"
-            delay={delay}
-            translateY={8}
-            revealedByDefault={revealedByDefault}
-        >
-            <Card
-                fillWidth
-                background="surface"
-                border="neutral-alpha-weak"
-                padding="m"
-                radius="l"
-                className={styles.downloadRow}
-            >
-                <Column gap="12">
-                    <Row horizontal="between" vertical="start" gap="12" s={{direction: "column"}}>
-                        <Column gap={6} style={{minWidth: 0}}>
-                            <Text variant="body-strong-s" wrap="balance">
-                                {task.titleName}
-                            </Text>
-                            <Text onBackground={statusDetails.tone} variant="body-default-xs" wrap="balance">
-                                {statusDetails.text}
-                            </Text>
-                        </Column>
-                        <Row gap="8" style={{flexWrap: "wrap"}}>
-                            <Badge background={statusBadgeBackground(task.statusRaw)}>
-                                {task.statusRaw}
-                            </Badge>
-                            <HoverCard
-                                trigger={(
-                                    <Button variant="tertiary" size="s">
-                                        Details
-                                    </Button>
-                                )}
-                                placement="top-end"
-                                offsetDistance="6"
-                            >
-                                <DownloadHoverDetails task={task} statusDetails={statusDetails}/>
-                            </HoverCard>
-                        </Row>
-                    </Row>
-
-                    <DownloadTaskBadges task={task}/>
-
+            </td>
+            <td className={styles.tableCell}>
+                <Column gap="8" className={styles.progressCell}>
+                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                        {progressSummary(task)}
+                    </Text>
                     <ProgressBar
                         fillWidth
                         value={task.progressValue}
                         label={false}
-                        barBackground={progressBarTone(task.statusRaw)}
-                        className={styles.progressBarCompact}
+                        barBackground={getTaskProgressTone(task.statusRaw) as ProgressTone}
+                        className={styles.tableProgressBar}
                     />
+                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                        {task.remaining.length} remaining
+                    </Text>
                 </Column>
-            </Card>
-        </RevealFx>
+            </td>
+            <td className={styles.tableCell}>
+                <Column gap={6} style={{minWidth: "16rem"}}>
+                    <Text onBackground={statusDetails.tone} variant="body-default-xs" wrap="balance">
+                        {statusDetails.text}
+                    </Text>
+                    {task.latestChapter && task.current !== task.latestChapter && (
+                        <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
+                            Latest chapter: {task.latestChapter}
+                        </Text>
+                    )}
+                </Column>
+            </td>
+            <td className={styles.tableCell}>
+                <Column gap="8" style={{minWidth: "12rem"}}>
+                    <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
+                        {describeTaskTime(task)}
+                    </Text>
+                    <HoverCard
+                        trigger={(
+                            <Button variant="tertiary" size="s">
+                                Details
+                            </Button>
+                        )}
+                        placement="top-end"
+                        offsetDistance="6"
+                    >
+                        <DownloadHoverDetails task={task} statusDetails={statusDetails}/>
+                    </HoverCard>
+                </Column>
+            </td>
+        </tr>
     );
 }
 
@@ -377,17 +286,19 @@ export function DownloadsPage() {
     const [downloads, setDownloads] = useState<RavenDownloadProgress[] | null>(null);
     const [downloadsError, setDownloadsError] = useState<string | null>(null);
     const [vpnStatus, setVpnStatus] = useState<RavenVpnRuntimeStatus | null>(null);
-    const [listLimit, setListLimit] = useState<number>(25);
 
     const [historyLoading, setHistoryLoading] = useState(false);
     const [history, setHistory] = useState<RavenDownloadProgress[]>([]);
+
+    const [bucketFilter, setBucketFilter] = useState<DownloadBucketFilter>("all");
+    const [statusFilter, setStatusFilter] = useState<DownloadStatusFilter>("all");
+    const [sortKey, setSortKey] = useState<DownloadSortKey>("newest");
+    const [sortDirection, setSortDirection] = useState<SortDirection>("descending");
 
     const [resumingDownloads, setResumingDownloads] = useState(false);
     const [pausingDownloads, setPausingDownloads] = useState(false);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
-
-    const revealedTaskKeysRef = useRef<Set<string>>(new Set());
 
     const pollDownloads = async () => {
         try {
@@ -542,39 +453,31 @@ export function DownloadsPage() {
         }
     };
 
-    const activeTaskViews = useMemo(
-        () => resolveActiveTaskViews(downloads ?? []) as ResolvedTaskView[],
-        [downloads],
+    const combinedTaskViews = useMemo(
+        () => resolveCombinedTaskViews(downloads ?? [], history) as ResolvedTaskView[],
+        [downloads, history],
     );
     const carouselTaskViews = useMemo(
-        () => selectCarouselTaskViews(activeTaskViews) as ResolvedTaskView[],
-        [activeTaskViews],
+        () => selectCarouselTaskViews(combinedTaskViews) as ResolvedTaskView[],
+        [combinedTaskViews],
     );
-    const displayedTaskViews = useMemo(
-        () => activeTaskViews.slice(0, listLimit),
-        [activeTaskViews, listLimit],
+    const filteredTaskViews = useMemo(
+        () => filterTaskViews(combinedTaskViews, {bucket: bucketFilter, status: statusFilter}) as ResolvedTaskView[],
+        [bucketFilter, combinedTaskViews, statusFilter],
+    );
+    const visibleTaskViews = useMemo(
+        () => sortTaskViews(filteredTaskViews, {sortKey, direction: sortDirection}) as ResolvedTaskView[],
+        [filteredTaskViews, sortDirection, sortKey],
     );
     const resumableTaskCount = useMemo(() => countResumableHistoryTasks(history), [history]);
     const canResumeDownloads = resumableTaskCount > 0;
-
-    useEffect(() => {
-        for (const task of activeTaskViews) {
-            revealedTaskKeysRef.current.add(task.key);
-        }
-    }, [activeTaskViews]);
-
-    const carouselItems = useMemo(
-        () =>
-            carouselTaskViews.map((task) => ({
-                slide: (
-                    <DownloadsCarouselSlide
-                        task={task}
-                        statusDetails={describeTaskStatus(task, vpnStatus) as TaskStatusDetails}
-                    />
-                ),
-                alt: task.titleName,
-            })),
-        [carouselTaskViews, vpnStatus],
+    const activeTaskCount = useMemo(
+        () => combinedTaskViews.filter((task) => task.source === "active").length,
+        [combinedTaskViews],
+    );
+    const recentTaskCount = useMemo(
+        () => combinedTaskViews.filter((task) => task.source === "recentHistory").length,
+        [combinedTaskViews],
     );
 
     const downloadsUnavailable = downloads == null && Boolean(downloadsError);
@@ -611,14 +514,17 @@ export function DownloadsPage() {
                                         Downloads
                                     </Heading>
                                     <Text onBackground="neutral-weak" wrap="balance">
-                                        Active-first queue view with a live carousel, progress bars, and hover details
-                                        for the current jobs.
+                                        Active downloads stay in a live poster rail while the shared table keeps the
+                                        current queue and the last 24 hours together in one place.
                                     </Text>
                                 </Column>
 
                                 <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    <Badge background="brand-alpha-weak">
+                                        {activeTaskCount} active
+                                    </Badge>
                                     <Badge background="neutral-alpha-weak">
-                                        {activeTaskViews.length} active
+                                        {recentTaskCount} last 24h
                                     </Badge>
                                     <Button variant="primary" href="/downloads/add">
                                         Add download
@@ -628,7 +534,7 @@ export function DownloadsPage() {
                                     </Button>
                                     <Button
                                         variant="secondary"
-                                        disabled={pausingDownloads || activeTaskViews.length === 0}
+                                        disabled={pausingDownloads || activeTaskCount === 0}
                                         onClick={() => void requestPauseDownloads()}
                                     >
                                         {pausingDownloads ? "Pausing..." : "Pause"}
@@ -672,10 +578,10 @@ export function DownloadsPage() {
                         <Column gap="12">
                             <Column gap="4">
                                 <Text variant="label-default-s" onBackground="neutral-weak">
-                                    Carousel
+                                    Active rail
                                 </Text>
                                 <Heading as="h2" variant="heading-strong-l">
-                                    First 10 active downloads
+                                    Live download cards
                                 </Heading>
                             </Column>
 
@@ -691,7 +597,7 @@ export function DownloadsPage() {
                                 </Text>
                             )}
 
-                            {!downloadsLoading && !downloadsUnavailable && carouselItems.length === 0 && (
+                            {!downloadsLoading && !downloadsUnavailable && carouselTaskViews.length === 0 && (
                                 <Card
                                     fillWidth
                                     background="surface"
@@ -705,22 +611,18 @@ export function DownloadsPage() {
                                             No active downloads
                                         </Heading>
                                         <Text onBackground="neutral-weak" wrap="balance">
-                                            Raven is idle right now. Add a title and the carousel will start tracking
-                                            the live queue automatically.
+                                            Raven is idle right now. Add a title and the live card rail will start
+                                            tracking the queue automatically.
                                         </Text>
                                     </Column>
                                 </Card>
                             )}
 
-                            {!downloadsLoading && !downloadsUnavailable && carouselItems.length > 0 && (
-                                <Carousel
-                                    items={carouselItems}
-                                    indicator="line"
-                                    controls
-                                    fillWidth
-                                    revealedByDefault
-                                    className={styles.downloadsCarousel}
-                                    play={{auto: true, controls: true, progress: true, interval: 4500}}
+                            {!downloadsLoading && !downloadsUnavailable && carouselTaskViews.length > 0 && (
+                                <DownloadsCarousel
+                                    tasks={carouselTaskViews}
+                                    intervalMs={DOWNLOADS_CAROUSEL_INTERVAL_MS}
+                                    vpnStatus={vpnStatus}
                                 />
                             )}
                         </Column>
@@ -738,66 +640,122 @@ export function DownloadsPage() {
                             <Row fillWidth horizontal="between" vertical="center" gap="12" s={{direction: "column"}}>
                                 <Column gap="4">
                                     <Text variant="label-default-s" onBackground="neutral-weak">
-                                        Active list
+                                        Shared table
                                     </Text>
                                     <Heading as="h2" variant="heading-strong-l">
-                                        Live queue
+                                        Active and last 24 hours
                                     </Heading>
                                 </Column>
-                                <Row gap={10} vertical="center" style={{flexWrap: "wrap"}}>
-                                    <Text onBackground="neutral-weak" variant="body-default-xs">
-                                        Showing {Math.min(activeTaskViews.length, listLimit)} of {activeTaskViews.length}
-                                    </Text>
-                                    <label className={styles.listLimitControl}>
-                                        <span className={styles.listLimitLabel}>Load</span>
-                                        <select
-                                            aria-label="Choose how many active downloads to load in the list"
-                                            className={styles.listLimitSelect}
-                                            value={String(listLimit)}
-                                            onChange={(event) => {
-                                                setListLimit(Number.parseInt(event.target.value, 10) || 25);
-                                            }}
-                                        >
-                                            {DOWNLOAD_LIST_LIMIT_OPTIONS.map((option) => (
-                                                <option key={option} value={option}>
-                                                    {option}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-                                </Row>
+                                <Text onBackground="neutral-weak" variant="body-default-xs">
+                                    Showing {visibleTaskViews.length} of {combinedTaskViews.length}
+                                </Text>
                             </Row>
 
-                            {downloadsLoading && (
-                                <Text onBackground="neutral-weak" variant="body-default-s">
-                                    Loading active downloads...
-                                </Text>
-                            )}
-
-                            {downloadsUnavailable && (
-                                <Text onBackground="neutral-weak" variant="body-default-s" wrap="balance">
-                                    Active downloads could not be loaded. Retry refresh when Raven is reachable again.
-                                </Text>
-                            )}
-
-                            {!downloadsLoading && !downloadsUnavailable && activeTaskViews.length === 0 && (
-                                <Text onBackground="neutral-weak" variant="body-default-s" wrap="balance">
-                                    No active downloads.
-                                </Text>
-                            )}
-
-                            {!downloadsLoading && !downloadsUnavailable && activeTaskViews.length > 0 && (
-                                <Column gap={10} className={styles.downloadsList}>
-                                    {displayedTaskViews.map((task, index) => (
-                                        <ActiveDownloadRow
-                                            key={task.key}
-                                            task={task}
-                                            statusDetails={describeTaskStatus(task, vpnStatus) as TaskStatusDetails}
-                                            revealedByDefault={revealedTaskKeysRef.current.has(task.key)}
-                                            delay={Math.min(index * 45, 180)}
-                                        />
+                            <Column gap={10} className={styles.toolbarStack}>
+                                <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    <Text onBackground="neutral-weak" variant="body-default-xs"
+                                          className={styles.toolbarLabel}>
+                                        Bucket
+                                    </Text>
+                                    {BUCKET_FILTERS.map((filterOption) => (
+                                        <Button
+                                            key={filterOption.value}
+                                            variant={bucketFilter === filterOption.value ? "primary" : "secondary"}
+                                            size="s"
+                                            onClick={() => setBucketFilter(filterOption.value)}
+                                        >
+                                            {filterOption.label}
+                                        </Button>
                                     ))}
-                                </Column>
+                                </Row>
+
+                                <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    <Text onBackground="neutral-weak" variant="body-default-xs"
+                                          className={styles.toolbarLabel}>
+                                        Status
+                                    </Text>
+                                    {STATUS_FILTERS.map((filterOption) => (
+                                        <Button
+                                            key={filterOption.value}
+                                            variant={statusFilter === filterOption.value ? "primary" : "secondary"}
+                                            size="s"
+                                            onClick={() => setStatusFilter(filterOption.value)}
+                                        >
+                                            {filterOption.label}
+                                        </Button>
+                                    ))}
+                                </Row>
+
+                                <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    <Text onBackground="neutral-weak" variant="body-default-xs"
+                                          className={styles.toolbarLabel}>
+                                        Sort
+                                    </Text>
+                                    {SORT_OPTIONS.map((option) => (
+                                        <Button
+                                            key={option.value}
+                                            variant={sortKey === option.value ? "primary" : "secondary"}
+                                            size="s"
+                                            onClick={() => setSortKey(option.value)}
+                                        >
+                                            {option.label}
+                                        </Button>
+                                    ))}
+                                    <Button
+                                        variant="secondary"
+                                        size="s"
+                                        onClick={() => {
+                                            setSortDirection((current) =>
+                                                current === "ascending" ? "descending" : "ascending");
+                                        }}
+                                    >
+                                        {sortDirection === "ascending" ? "Ascending" : "Descending"}
+                                    </Button>
+                                </Row>
+                            </Column>
+
+                            {downloadsLoading && combinedTaskViews.length === 0 && (
+                                <Text onBackground="neutral-weak" variant="body-default-s">
+                                    Loading downloads...
+                                </Text>
+                            )}
+
+                            {!downloadsLoading && combinedTaskViews.length === 0 && (
+                                <Text onBackground="neutral-weak" variant="body-default-s" wrap="balance">
+                                    No active downloads or recent history yet.
+                                </Text>
+                            )}
+
+                            {!downloadsLoading && combinedTaskViews.length > 0 && visibleTaskViews.length === 0 && (
+                                <Text onBackground="neutral-weak" variant="body-default-s" wrap="balance">
+                                    No downloads match the current filters.
+                                </Text>
+                            )}
+
+                            {visibleTaskViews.length > 0 && (
+                                <div className={styles.tableScroller}>
+                                    <table className={styles.downloadsTable}>
+                                        <thead>
+                                        <tr>
+                                            <th className={styles.tableHeaderCell}>Title</th>
+                                            <th className={styles.tableHeaderCell}>Bucket</th>
+                                            <th className={styles.tableHeaderCell}>Status</th>
+                                            <th className={styles.tableHeaderCell}>Progress</th>
+                                            <th className={styles.tableHeaderCell}>Current / detail</th>
+                                            <th className={styles.tableHeaderCell}>Time</th>
+                                        </tr>
+                                        </thead>
+                                        <tbody>
+                                        {visibleTaskViews.map((task) => (
+                                            <DownloadTableRow
+                                                key={task.key}
+                                                task={task}
+                                                statusDetails={describeTaskStatus(task, vpnStatus) as TaskStatusDetails}
+                                            />
+                                        ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             )}
                         </Column>
                     </Card>

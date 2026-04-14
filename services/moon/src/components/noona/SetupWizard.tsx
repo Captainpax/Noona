@@ -267,7 +267,11 @@ const BG_BRAND_ALPHA_WEAK = "brand-alpha-weak" as const;
 const BG_SUCCESS_ALPHA_WEAK = "success-alpha-weak" as const;
 
 const SETUP_TABS: Array<{ id: SetupTabId; label: string; description: string }> = [
-    {id: "storage", label: "Storage", description: "Pick the Noona root folder and review shared mounts."},
+    {
+        id: "storage",
+        label: "Storage",
+        description: "Pick the Noona root folder and review the always-on storage layout."
+    },
     {id: "integrations", label: "Library Setup", description: "Choose how Noona should connect to Kavita and Komf."},
     {id: "services", label: "Discord", description: "Connect Discord and tune the Portal onboarding settings."},
     {
@@ -2293,6 +2297,7 @@ export function SetupWizard() {
                                     <Text onBackground="neutral-weak" variant="body-default-xs">
                                         Warden now uses a single root for the stack. On Windows the default is
                                         `%APPDATA%\\noona`; on non-Windows hosts the default is `/mnt/user/noona`.
+                                        Mongo, Redis, and Vault storage stay under this root automatically.
                                     </Text>
                                 </Column>
                             </Card>
@@ -2300,6 +2305,10 @@ export function SetupWizard() {
                             <Card fillWidth background={BG_SURFACE} border="neutral-alpha-weak" padding="l" radius="l">
                                 <Column gap="16">
                                     <Heading as="h2" variant="heading-strong-l">Folder layout preview</Heading>
+                                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                                        Mongo, Redis, and Vault are always included as part of the core Noona stack,
+                                        even when the saved setup profile only selects optional apps.
+                                    </Text>
                                     <Column gap="12">
                                         {storagePreview.map((entry) => (
                                             <Column key={entry.service} gap="8">
@@ -2684,6 +2693,7 @@ export function SetupWizard() {
                                     <Text onBackground="neutral-weak" variant="body-default-xs">
                                         Upload a setup JSON file to review it in the wizard, or save the current
                                         masked profile, then let Warden validate, persist, and install the stack.
+                                        Mongo, Redis, and Vault stay implicit and always ship with the core services.
                                     </Text>
                                     <Row gap="8" style={{flexWrap: "wrap"}}>
                                         <Button size="s" variant="secondary" onClick={() => void downloadConfigFile()}>

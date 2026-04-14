@@ -2,9 +2,12 @@ import {spawn} from "node:child_process";
 import {createRequire} from "node:module";
 
 import {createNoonaLogWriter} from "../../../utilities/etc/logFile.mjs";
+import {loadServiceRuntimeConfig} from "../../../utilities/etc/wardenRuntimeBootstrap.mjs";
 
 const DEFAULT_WEBGUI_PORT = 3000;
 const require = createRequire(import.meta.url);
+
+await loadServiceRuntimeConfig();
 
 const resolveWebGuiPort = () => {
     const rawValue = process.env.WEBGUI_PORT ?? process.env.PORT ?? String(DEFAULT_WEBGUI_PORT);

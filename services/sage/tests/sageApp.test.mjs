@@ -4223,7 +4223,7 @@ test('POST /api/raven/library/checkForNew proxies Raven library sync', async (t)
         ravenClient: createRavenStub({
             async checkLibraryForNewChapters() {
                 calls.push('sync')
-                return {checkedTitles: 2, queuedChapters: 5}
+                return {status: 202, payload: {checkedTitles: 2, queuedChapters: 5}}
             },
         }),
     })
@@ -4235,6 +4235,24 @@ test('POST /api/raven/library/checkForNew proxies Raven library sync', async (t)
     assert.equal(response.status, 202)
     assert.deepEqual(await response.json(), {checkedTitles: 2, queuedChapters: 5})
     assert.deepEqual(calls, ['sync'])
+})
+
+test('POST /api/raven/library/checkForNew preserves Raven 200 responses', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        ravenClient: createRavenStub({
+            async checkLibraryForNewChapters() {
+                return {status: 200, payload: {checkedTitles: 2, queuedChapters: 0}}
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/raven/library/checkForNew`, {method: 'POST'})
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {checkedTitles: 2, queuedChapters: 0})
 })
 
 test('POST /api/raven/library/checkForNew surfaces Raven errors', async (t) => {
@@ -4390,7 +4408,7 @@ test('POST /api/raven/title/:uuid/checkForNew proxies title sync', async (t) => 
         ravenClient: createRavenStub({
             async checkTitleForNewChapters(uuid) {
                 calls.push(uuid)
-                return {uuid, status: 'updated', totalQueued: 3}
+                return {status: 202, payload: {uuid, status: 'queued', totalQueued: 3}}
             },
         }),
     })
@@ -4400,8 +4418,26 @@ test('POST /api/raven/title/:uuid/checkForNew proxies title sync', async (t) => 
 
     const response = await fetch(`${baseUrl}/api/raven/title/title-123/checkForNew`, {method: 'POST'})
     assert.equal(response.status, 202)
-    assert.deepEqual(await response.json(), {uuid: 'title-123', status: 'updated', totalQueued: 3})
+    assert.deepEqual(await response.json(), {uuid: 'title-123', status: 'queued', totalQueued: 3})
     assert.deepEqual(calls, ['title-123'])
+})
+
+test('POST /api/raven/title/:uuid/checkForNew preserves Raven 200 responses', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        ravenClient: createRavenStub({
+            async checkTitleForNewChapters(uuid) {
+                return {status: 200, payload: {uuid, status: 'up-to-date', totalQueued: 0}}
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/raven/title/title-123/checkForNew`, {method: 'POST'})
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {uuid: 'title-123', status: 'up-to-date', totalQueued: 0})
 })
 
 test('POST /api/raven/title/:uuid/checkForNew returns 404 for unknown titles', async (t) => {
@@ -4618,6 +4654,43 @@ test('POST /api/raven/download queues downloads via Raven client', async (t) => 
     assert.equal(response.status, 202)
     assert.deepEqual(await response.json(), {status: 'queued', message: 'Download queued for: Naruto'})
     assert.deepEqual(payloads, [{ searchId: 'search-123', optionIndex: 2 }])
+})
+
+test('POST /api/raven/download forwards allowDownloadWithoutVpn when provided', async (t) => {
+    const payloads = []
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        ravenClient: createRavenStub({
+            async queueDownloadDetailed(payload) {
+                payloads.push(payload)
+                return {
+                    status: 202,
+                    payload: {status: 'queued', message: 'Download queued for: Naruto'},
+                }
+            },
+        }),
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/raven/download`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            searchId: 'search-123',
+            optionIndex: 2,
+            allowDownloadWithoutVpn: true,
+        }),
+    })
+
+    assert.equal(response.status, 202)
+    assert.deepEqual(await response.json(), {status: 'queued', message: 'Download queued for: Naruto'})
+    assert.deepEqual(payloads, [{
+        searchId: 'search-123',
+        optionIndex: 2,
+        allowDownloadWithoutVpn: true,
+    }])
 })
 
 test('POST /api/raven/download rejects invalid payloads', async (t) => {
@@ -7424,8 +7497,9 @@ test('Discord OAuth login auto-creates a Discord user with configured default pe
 })
 
 test('settings Discord onboarding message route returns the seeded default template', async (t) => {
+    const defaultInviteUrl = 'https://discord.gg/ukhtZrgJ9e'
     const defaultTemplate = [
-        'Welcome to {guild_name}!',
+        'Welcome to {guild_name}, {user_mention}!',
         '',
         'Start with Moon: {moon_url}',
         'Read in Kavita: {kavita_url}',
@@ -7454,11 +7528,15 @@ test('settings Discord onboarding message route returns the seeded default templ
     const payload = await response.json()
     assert.equal(payload.key, 'discord.onboarding_message')
     assert.equal(payload.template, defaultTemplate)
+    assert.equal(payload.channelId, '')
+    assert.equal(payload.inviteUrl, defaultInviteUrl)
     assert.ok(typeof payload.updatedAt === 'string')
 
     const stored = vault.settingDocs.find((entry) => entry.key === 'discord.onboarding_message')
     assert.ok(stored)
     assert.equal(stored.template, defaultTemplate)
+    assert.equal(stored.channelId, '')
+    assert.equal(stored.inviteUrl, defaultInviteUrl)
 })
 
 test('settings Discord onboarding message route persists updates and returns updatedAt', async (t) => {
@@ -7480,6 +7558,8 @@ test('settings Discord onboarding message route persists updates and returns upd
         'Kavita: {kavita_url}',
         'Unknown token stays: {custom_note}',
     ].join('\n')
+    const channelId = '123456789012345678'
+    const inviteUrl = 'https://discord.gg/example-noona'
 
     const putResponse = await fetch(`${baseUrl}/api/settings/discord/onboarding-message`, {
         method: 'PUT',
@@ -7487,12 +7567,14 @@ test('settings Discord onboarding message route persists updates and returns upd
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({template}),
+        body: JSON.stringify({template, channelId, inviteUrl}),
     })
     assert.equal(putResponse.status, 200)
     const putPayload = await putResponse.json()
     assert.equal(putPayload.key, 'discord.onboarding_message')
     assert.equal(putPayload.template, template)
+    assert.equal(putPayload.channelId, channelId)
+    assert.equal(putPayload.inviteUrl, inviteUrl)
     assert.ok(typeof putPayload.updatedAt === 'string')
 
     const getResponse = await fetch(`${baseUrl}/api/settings/discord/onboarding-message`, {
@@ -7501,11 +7583,15 @@ test('settings Discord onboarding message route persists updates and returns upd
     assert.equal(getResponse.status, 200)
     const getPayload = await getResponse.json()
     assert.equal(getPayload.template, template)
+    assert.equal(getPayload.channelId, channelId)
+    assert.equal(getPayload.inviteUrl, inviteUrl)
     assert.equal(getPayload.updatedAt, putPayload.updatedAt)
 
     const stored = vault.settingDocs.find((entry) => entry.key === 'discord.onboarding_message')
     assert.ok(stored)
     assert.equal(stored.template, template)
+    assert.equal(stored.channelId, channelId)
+    assert.equal(stored.inviteUrl, inviteUrl)
     assert.equal(stored.updatedAt, putPayload.updatedAt)
 })
 
@@ -7533,6 +7619,36 @@ test('settings Discord onboarding message route rejects empty templates', async 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
         error: 'template must not be empty.',
+    })
+})
+
+test('settings Discord onboarding message route rejects invalid invite URLs', async (t) => {
+    const vault = createVaultAuthStub()
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const response = await fetch(`${baseUrl}/api/settings/discord/onboarding-message`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            template: 'Welcome to {guild_name}, {user_mention}!',
+            inviteUrl: 'discord://not-supported',
+        }),
+    })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+        error: 'inviteUrl must be a valid absolute HTTP or HTTPS URL.',
     })
 })
 
@@ -7578,6 +7694,392 @@ test('settings Discord onboarding message route stays admin-gated after setup co
     assert.equal(memberResponse.status, 403)
     assert.deepEqual(await memberResponse.json(), {
         error: 'Admin privileges are required.',
+    })
+})
+
+test('signed-in Discord invite route returns the stored invite URL for non-admin users', async (t) => {
+    const inviteUrl = 'https://discord.gg/public-reader-link'
+    const vault = createVaultAuthStub({
+        settings: [
+            {
+                key: 'discord.onboarding_message',
+                template: 'Welcome to {guild_name}, {user_mention}!',
+                channelId: '123456789012345678',
+                inviteUrl,
+                updatedAt: '2026-04-13T00:00:00.000Z',
+            },
+        ],
+    })
+    await vault.client.users.create({
+        username: 'ReaderOne',
+        password: 'Password123',
+        role: 'member',
+    })
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        wizardStateClient: {
+            async loadState() {
+                return {completed: true}
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const unauthorizedResponse = await fetch(`${baseUrl}/api/discord/invite`)
+    assert.equal(unauthorizedResponse.status, 401)
+    assert.deepEqual(await unauthorizedResponse.json(), {
+        error: 'Unauthorized.',
+    })
+
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: 'ReaderOne', password: 'Password123'}),
+    })
+    assert.equal(loginResponse.status, 200)
+    const loginPayload = await loginResponse.json()
+    assert.equal(loginPayload.user.role, 'member')
+
+    const inviteResponse = await fetch(`${baseUrl}/api/discord/invite`, {
+        headers: {Authorization: `Bearer ${loginPayload.token}`},
+    })
+    assert.equal(inviteResponse.status, 200)
+    assert.deepEqual(await inviteResponse.json(), {
+        inviteUrl,
+    })
+})
+
+test('settings Discord onboarding test route forwards the requested channel and preview text to Portal', async (t) => {
+    const vault = createVaultAuthStub()
+    const portalCalls = []
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        portalClient: {
+            sendDiscordOnboardingTestMessage: async payload => {
+                portalCalls.push(payload)
+                return {
+                    status: 200,
+                    payload: {
+                        ok: true,
+                        channelId: payload.channelId,
+                    },
+                }
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+    const finalized = await finalizeBootstrapAdmin({baseUrl, token})
+    assert.equal(finalized.response.status, 200)
+
+    const content = 'Welcome to Noona Guild, @new-member!'
+    const response = await fetch(`${baseUrl}/api/settings/discord/onboarding-message/test`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            channelId: '123456789012345678',
+            content,
+        }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+        ok: true,
+        channelId: '123456789012345678',
+    })
+    assert.deepEqual(portalCalls, [{
+        channelId: '123456789012345678',
+        content,
+    }])
+})
+
+test('settings Discord onboarding test route rejects blank channel ids and content', async (t) => {
+    const vault = createVaultAuthStub()
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        portalClient: {
+            sendDiscordOnboardingTestMessage: async () => {
+                throw new Error('Portal should not be called for invalid requests')
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+    const finalized = await finalizeBootstrapAdmin({baseUrl, token})
+    assert.equal(finalized.response.status, 200)
+
+    const missingChannelResponse = await fetch(`${baseUrl}/api/settings/discord/onboarding-message/test`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            channelId: ' \n ',
+            content: 'Preview text',
+        }),
+    })
+    assert.equal(missingChannelResponse.status, 400)
+    assert.deepEqual(await missingChannelResponse.json(), {
+        error: 'channelId must not be empty.',
+    })
+
+    const missingContentResponse = await fetch(`${baseUrl}/api/settings/discord/onboarding-message/test`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            channelId: '123456789012345678',
+            content: '   ',
+        }),
+    })
+    assert.equal(missingContentResponse.status, 400)
+    assert.deepEqual(await missingContentResponse.json(), {
+        error: 'content must not be empty.',
+    })
+})
+
+test('settings Discord onboarding test route stays admin-gated after setup completes', async (t) => {
+    const vault = createVaultAuthStub()
+    await vault.client.users.create({
+        username: 'ReaderOne',
+        password: 'Password123',
+        role: 'member',
+    })
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        portalClient: {
+            sendDiscordOnboardingTestMessage: async () => ({
+                status: 200,
+                payload: {ok: true, channelId: '123456789012345678'},
+            }),
+        },
+        wizardStateClient: {
+            async loadState() {
+                return {completed: true}
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const unauthorizedResponse = await fetch(`${baseUrl}/api/settings/discord/onboarding-message/test`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            channelId: '123456789012345678',
+            content: 'Preview text',
+        }),
+    })
+    assert.equal(unauthorizedResponse.status, 401)
+    assert.deepEqual(await unauthorizedResponse.json(), {
+        error: 'Unauthorized.',
+    })
+
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: 'ReaderOne', password: 'Password123'}),
+    })
+    assert.equal(loginResponse.status, 200)
+    const loginPayload = await loginResponse.json()
+    assert.equal(loginPayload.user.role, 'member')
+
+    const memberResponse = await fetch(`${baseUrl}/api/settings/discord/onboarding-message/test`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${loginPayload.token}`,
+        },
+        body: JSON.stringify({
+            channelId: '123456789012345678',
+            content: 'Preview text',
+        }),
+    })
+    assert.equal(memberResponse.status, 403)
+    assert.deepEqual(await memberResponse.json(), {
+        error: 'Admin privileges are required.',
+    })
+})
+
+test('settings Discord onboarding test route preserves Portal unavailability responses', async (t) => {
+    const vault = createVaultAuthStub()
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        portalClient: {
+            sendDiscordOnboardingTestMessage: async () => ({
+                status: 503,
+                payload: {
+                    error: 'Discord messaging is not configured.',
+                },
+            }),
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+    const finalized = await finalizeBootstrapAdmin({baseUrl, token})
+    assert.equal(finalized.response.status, 200)
+
+    const response = await fetch(`${baseUrl}/api/settings/discord/onboarding-message/test`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            channelId: '123456789012345678',
+            content: 'Preview text',
+        }),
+    })
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), {
+        error: 'Discord messaging is not configured.',
+    })
+})
+
+test('settings Discord chapter notification route returns the seeded default setting', async (t) => {
+    const vault = createVaultAuthStub()
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+    const finalized = await finalizeBootstrapAdmin({baseUrl, token})
+    assert.equal(finalized.response.status, 200)
+
+    const response = await fetch(`${baseUrl}/api/settings/discord/chapter-notifications`, {
+        headers: {Authorization: `Bearer ${token}`},
+    })
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.equal(payload.key, 'discord.chapter_notifications')
+    assert.equal(payload.enabled, false)
+    assert.equal(payload.channelId, '')
+    assert.equal(payload.announcementCount, 0)
+    assert.equal(payload.lastAnnouncedAt, null)
+    assert.ok(typeof payload.updatedAt === 'string')
+
+    const stored = vault.settingDocs.find((entry) => entry.key === 'discord.chapter_notifications')
+    assert.ok(stored)
+    assert.equal(stored.enabled, false)
+    assert.equal(stored.channelId, '')
+    assert.equal(stored.announcementCount, 0)
+})
+
+test('settings Discord chapter notification route persists updates and resets the baseline when re-enabled', async (t) => {
+    const vault = createVaultAuthStub({
+        settings: [
+            {
+                key: 'discord.chapter_notifications',
+                enabled: false,
+                channelId: '',
+                baselineCapturedAt: '2026-04-13T01:00:00.000Z',
+                sentChapterKeys: ['uuid:title-uuid-1:1'],
+                lastAnnouncedAt: '2026-04-13T02:00:00.000Z',
+                announcementCount: 2,
+                updatedAt: '2026-04-13T00:00:00.000Z',
+            },
+        ],
+    })
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const response = await fetch(`${baseUrl}/api/settings/discord/chapter-notifications`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            enabled: true,
+            channelId: '123456789012345678',
+        }),
+    })
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.equal(payload.key, 'discord.chapter_notifications')
+    assert.equal(payload.enabled, true)
+    assert.equal(payload.channelId, '123456789012345678')
+    assert.equal(payload.announcementCount, 2)
+    assert.equal(payload.lastAnnouncedAt, '2026-04-13T02:00:00.000Z')
+    assert.ok(typeof payload.updatedAt === 'string')
+
+    const stored = vault.settingDocs.find((entry) => entry.key === 'discord.chapter_notifications')
+    assert.ok(stored)
+    assert.equal(stored.enabled, true)
+    assert.equal(stored.channelId, '123456789012345678')
+    assert.equal(stored.baselineCapturedAt, null)
+    assert.deepEqual(stored.sentChapterKeys, [])
+    assert.equal(stored.lastAnnouncedAt, '2026-04-13T02:00:00.000Z')
+    assert.equal(stored.announcementCount, 2)
+})
+
+test('settings Discord chapter notification route rejects enabled saves without a channel id', async (t) => {
+    const vault = createVaultAuthStub()
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const response = await fetch(`${baseUrl}/api/settings/discord/chapter-notifications`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            enabled: true,
+            channelId: ' \n ',
+        }),
+    })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+        error: 'channelId must not be empty when Discord chapter posts are enabled.',
     })
 })
 
@@ -7770,12 +8272,11 @@ test('settings Warden-backed config, restart, and ecosystem routes preserve upst
     })
 })
 
-test('settings download worker routes read and update per-thread rate limits', async (t) => {
+test('settings download limits route reads and updates the overall speed limit', async (t) => {
     const vault = createVaultAuthStub({
         settings: [{
-            key: 'downloads.workers',
-            threadRateLimitsKbps: [128, 0, 1024 * 1024],
-            cpuCoreIds: [2, -1],
+            key: 'downloads.limits',
+            overallSpeedLimitKbps: 2048,
             updatedAt: '2026-01-01T00:00:00.000Z',
         }],
     })
@@ -7783,9 +8284,6 @@ test('settings download worker routes read and update per-thread rate limits', a
     const app = createSageApp({
         serviceName: 'test-sage',
         vaultClient: vault.client,
-        ravenClient: {
-            getDownloadSummary: async () => ({maxThreads: 5}),
-        },
     })
 
     const {server, baseUrl} = await listen(app)
@@ -7793,42 +8291,70 @@ test('settings download worker routes read and update per-thread rate limits', a
 
     const {token} = await bootstrapAdminAndLogin({baseUrl})
 
-    const getResponse = await fetch(`${baseUrl}/api/settings/downloads/workers`, {
+    const getResponse = await fetch(`${baseUrl}/api/settings/downloads/limits`, {
         headers: {Authorization: `Bearer ${token}`},
     })
     assert.equal(getResponse.status, 200)
     assert.deepEqual(await getResponse.json(), {
-        key: 'downloads.workers',
-        threadRateLimitsKbps: [128, -1, 1024 * 1024, -1, -1],
-        cpuCoreIds: [2, -1, -1, -1, -1],
+        key: 'downloads.limits',
+        overallSpeedLimitKbps: 2048,
         updatedAt: '2026-01-01T00:00:00.000Z',
     })
 
-    const putResponse = await fetch(`${baseUrl}/api/settings/downloads/workers`, {
+    const putResponse = await fetch(`${baseUrl}/api/settings/downloads/limits`, {
         method: 'PUT',
         headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-            threadRateLimitsKbps: [512, -1, '10mb', '1gb', '0'],
-            cpuCoreIds: [3, -1, '7', '8', 9.8],
+            overallSpeedLimitKbps: '10mb',
         }),
     })
     assert.equal(putResponse.status, 200)
     const putPayload = await putResponse.json()
-    assert.equal(putPayload.key, 'downloads.workers')
-    assert.deepEqual(putPayload.threadRateLimitsKbps, [512, -1, 10 * 1024, 1024 * 1024, -1])
-    assert.deepEqual(putPayload.cpuCoreIds, [3, -1, 7, 8, 9])
+    assert.equal(putPayload.key, 'downloads.limits')
+    assert.equal(putPayload.overallSpeedLimitKbps, 10 * 1024)
     assert.ok(typeof putPayload.updatedAt === 'string')
 
-    const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.workers')
+    const stored = vault.settingDocs.find((entry) => entry.key === 'downloads.limits')
     assert.ok(stored)
-    assert.deepEqual(stored.threadRateLimitsKbps, [512, -1, 10 * 1024, 1024 * 1024, -1])
-    assert.deepEqual(stored.cpuCoreIds, [3, -1, 7, 8, 9])
+    assert.equal(stored.overallSpeedLimitKbps, 10 * 1024)
 })
 
-test('settings download worker routes reject invalid unit strings', async (t) => {
+test('settings download limits route falls back to legacy worker settings when limits are missing', async (t) => {
+    const vault = createVaultAuthStub({
+        settings: [{
+            key: 'downloads.workers',
+            threadRateLimitsKbps: [512, -1, '10mb', 0],
+            cpuCoreIds: [3, -1, 7, 8],
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+    })
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const {token} = await bootstrapAdminAndLogin({baseUrl})
+
+    const response = await fetch(`${baseUrl}/api/settings/downloads/limits`, {
+        headers: {Authorization: `Bearer ${token}`},
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+        key: 'downloads.limits',
+        overallSpeedLimitKbps: 512 + (10 * 1024),
+        updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+})
+
+test('settings download limits route rejects invalid unit strings', async (t) => {
     const vault = createVaultAuthStub()
 
     const app = createSageApp({
@@ -7841,53 +8367,20 @@ test('settings download worker routes reject invalid unit strings', async (t) =>
 
     const {token} = await bootstrapAdminAndLogin({baseUrl})
 
-    const putResponse = await fetch(`${baseUrl}/api/settings/downloads/workers`, {
+    const putResponse = await fetch(`${baseUrl}/api/settings/downloads/limits`, {
         method: 'PUT',
         headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-            threadRateLimitsKbps: ['fast'],
+            overallSpeedLimitKbps: 'fast',
         }),
     })
 
     assert.equal(putResponse.status, 400)
     const payload = await putResponse.json()
-    assert.equal(payload.error, 'Thread 1 rate limit must be a number in KB/s, may use `mb`/`gb`, or `-1` for unlimited.')
-})
-
-test('settings download worker routes reject invalid cpu core assignments', async (t) => {
-    const vault = createVaultAuthStub()
-
-    const app = createSageApp({
-        serviceName: 'test-sage',
-        vaultClient: vault.client,
-        ravenClient: {
-            getDownloadSummary: async () => ({maxThreads: 3}),
-        },
-    })
-
-    const {server, baseUrl} = await listen(app)
-    t.after(() => closeServer(server))
-
-    const {token} = await bootstrapAdminAndLogin({baseUrl})
-
-    const putResponse = await fetch(`${baseUrl}/api/settings/downloads/workers`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-            threadRateLimitsKbps: [512, -1, -1],
-            cpuCoreIds: [0, 'left', -1],
-        }),
-    })
-
-    assert.equal(putResponse.status, 400)
-    const payload = await putResponse.json()
-    assert.equal(payload.error, 'Thread 2 CPU core must be `-1` or a non-negative integer CPU ID.')
+    assert.equal(payload.error, 'overallSpeedLimitKbps must be a number in KB/s, may use `mb`/`gb`, or `-1` for unlimited.')
 })
 
 test('settings naming route falls back to defaults when Vault read fails', async (t) => {

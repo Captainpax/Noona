@@ -59,7 +59,7 @@ Source installs and parallel quick starts are intentionally not the public path 
 | [Moon](services/moon/README.md)     | Main web UI                                    | Setup, settings, users, permissions, operations         |
 | [Portal](services/portal/README.md) | Discord and Kavita bridge                      | Discord bot setup, onboarding, recommendation flows     |
 | [Sage](services/sage/README.md)     | Setup, auth, and browser API broker            | Login, setup, and proxy troubleshooting                 |
-| [Raven](services/raven/readme.md)   | Downloader and library worker                  | Download jobs, imports, worker tuning, storage checks   |
+| [Raven](services/raven/readme.md)   | Downloader and library sync                    | Download jobs, imports, speed limits, storage checks    |
 | [Vault](services/vault/readme.md)   | Shared data and auth broker                    | User/auth persistence, secrets, reset and recovery work |
 | [Kavita](services/kavita/README.md) | Managed reading server                         | Reader access, external links, Noona login handoff      |
 | [Komf](services/komf/README.md)     | Managed metadata helper                        | Metadata matching and enrichment issues                 |

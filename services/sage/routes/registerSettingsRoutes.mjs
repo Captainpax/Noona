@@ -69,28 +69,35 @@ export function registerSettingsRoutes(context = {}) {
     const {
         app,
         applyDebugSetting,
+        DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS,
         DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS,
+        DEFAULT_DOWNLOAD_LIMITS_SETTINGS,
         DEFAULT_DOWNLOAD_VPN_SETTINGS,
         DEFAULT_DOWNLOAD_WORKER_SETTINGS,
         DEFAULT_NAMING_SETTINGS,
         logger,
         normalizeString,
         parseBooleanInput,
+        portalClient,
         queueEcosystemRestart,
         ravenClient,
+        readDiscordChapterNotificationSettings,
         readDiscordOnboardingMessageSetting,
+        readDownloadLimitsSettings,
         readDownloadWorkerSettings,
         readDownloadVpnSettings,
         readDebugSetting,
         readNamingSettings,
         requireAdminSession,
         requireAdminSessionIfSetupCompleted,
+        requireSession,
         resolveDangerousActionConfirmation,
         resolveBaseRedirectUrl,
         sanitizeDownloadVpnSettingsForResponse,
         serviceName,
         settingsCollection,
         setupClient,
+        validateOverallSpeedLimitInput,
         validateCpuCoreIdsInput,
         validateThreadRateLimitsInput,
         vaultClient,
@@ -99,12 +106,66 @@ export function registerSettingsRoutes(context = {}) {
         verifyDangerousActionConfirmation,
         verifyFactoryResetSelections,
         writeDiscordOnboardingMessageSetting,
+        writeDiscordChapterNotificationSettings,
+        writeDownloadLimitsSettings,
         writeDownloadWorkerSettings,
         writeDownloadVpnSettings,
         writeNamingSettings,
     } = context
 
+    const buildDiscordOnboardingMessageResponse = (setting = {}) => ({
+        key: setting?.key || DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.key,
+        template:
+            typeof setting?.template === 'string' && setting.template.trim()
+                ? setting.template
+                : DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.template,
+        channelId:
+            typeof setting?.channelId === 'string' && setting.channelId.trim()
+                ? setting.channelId.trim()
+                : DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.channelId,
+        inviteUrl:
+            typeof setting?.inviteUrl === 'string' && setting.inviteUrl.trim()
+                ? setting.inviteUrl.trim()
+                : DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.inviteUrl,
+        updatedAt: setting?.updatedAt || null,
+    })
+
+    const buildDiscordChapterNotificationResponse = (setting = {}) => ({
+        key: setting?.key || DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.key,
+        enabled: setting?.enabled === true,
+        channelId:
+            typeof setting?.channelId === 'string' && setting.channelId.trim()
+                ? setting.channelId.trim()
+                : DEFAULT_DISCORD_CHAPTER_NOTIFICATION_SETTINGS.channelId,
+        updatedAt: setting?.updatedAt || null,
+        lastAnnouncedAt: setting?.lastAnnouncedAt || null,
+        announcementCount:
+            Number.isFinite(Number(setting?.announcementCount)) && Number(setting?.announcementCount) >= 0
+                ? Math.floor(Number(setting?.announcementCount))
+                : 0,
+    })
+
+    const buildDiscordInviteResponse = (setting = {}) => ({
+        inviteUrl:
+            typeof setting?.inviteUrl === 'string' && setting.inviteUrl.trim()
+                ? setting.inviteUrl.trim()
+                : DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.inviteUrl,
+    })
+
     app.use('/api/settings', requireAdminSessionIfSetupCompleted)
+
+    app.get('/api/discord/invite', async (req, res) => {
+        const session = await requireSession(req, res)
+        if (!session) return
+
+        try {
+            const setting = await readDiscordOnboardingMessageSetting()
+            res.json(buildDiscordInviteResponse(setting))
+        } catch (error) {
+            logger.error(`[${serviceName}] Failed to load Discord invite URL: ${error.message}`)
+            res.status(502).json({error: 'Unable to load Discord invite URL.'})
+        }
+    })
 
     app.get('/api/settings/debug', async (_req, res) => {
         if (!vaultClient?.mongo?.findOne) {
@@ -149,14 +210,7 @@ export function registerSettingsRoutes(context = {}) {
 
         try {
             const setting = await readDiscordOnboardingMessageSetting()
-            res.json({
-                key: setting?.key || DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.key,
-                template:
-                    typeof setting?.template === 'string' && setting.template.trim()
-                        ? setting.template
-                        : DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.template,
-                updatedAt: setting?.updatedAt || null,
-            })
+            res.json(buildDiscordOnboardingMessageResponse(setting))
         } catch (error) {
             logger.error(`[${serviceName}] Failed to load Discord onboarding message: ${error.message}`)
             res.status(502).json({error: 'Unable to load Discord onboarding message.'})
@@ -175,20 +229,139 @@ export function registerSettingsRoutes(context = {}) {
         }
 
         try {
-            const setting = await writeDiscordOnboardingMessageSetting(req.body.template)
-            res.json({
-                key: setting?.key || DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.key,
-                template:
-                    typeof setting?.template === 'string' && setting.template.trim()
-                        ? setting.template
-                        : DEFAULT_DISCORD_ONBOARDING_MESSAGE_SETTINGS.template,
-                updatedAt: setting?.updatedAt || null,
-            })
+            const setting = await writeDiscordOnboardingMessageSetting(
+                req.body.template,
+                req.body?.channelId,
+                req.body?.inviteUrl,
+            )
+            res.json(buildDiscordOnboardingMessageResponse(setting))
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to update Discord onboarding message.'
-            const status = message === 'template must not be empty.' ? 400 : 502
+            const status =
+                message === 'template must not be empty.' || message === 'inviteUrl must be a valid absolute HTTP or HTTPS URL.'
+                    ? 400
+                    : 502
             logger.error(`[${serviceName}] Failed to update Discord onboarding message: ${message}`)
             res.status(status).json({error: message})
+        }
+    })
+
+    app.post('/api/settings/discord/onboarding-message/test', async (req, res) => {
+        const channelId = trimString(req.body?.channelId)
+        const content = typeof req.body?.content === 'string' ? req.body.content : ''
+
+        if (!channelId) {
+            res.status(400).json({error: 'channelId must not be empty.'})
+            return
+        }
+
+        if (!content.trim()) {
+            res.status(400).json({error: 'content must not be empty.'})
+            return
+        }
+
+        if (!portalClient?.sendDiscordOnboardingTestMessage) {
+            res.status(503).json({error: 'Portal Discord messaging is not configured.'})
+            return
+        }
+
+        try {
+            const result = await resolveActionResult(
+                () => portalClient.sendDiscordOnboardingTestMessage({channelId, content}),
+                200,
+                () => ({ok: true, channelId}),
+            )
+            res.status(result.status).json(result.payload)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unable to send Discord onboarding test message.'
+            logger.error(`[${serviceName}] Failed to send Discord onboarding test message: ${message}`)
+            res.status(502).json({error: message})
+        }
+    })
+
+    app.get('/api/settings/discord/chapter-notifications', async (_req, res) => {
+        if (!vaultClient?.mongo?.findOne) {
+            res.status(503).json({error: 'Vault storage is not configured.'})
+            return
+        }
+
+        try {
+            const setting = await readDiscordChapterNotificationSettings()
+            res.json(buildDiscordChapterNotificationResponse(setting))
+        } catch (error) {
+            logger.error(`[${serviceName}] Failed to load Discord chapter notification settings: ${error.message}`)
+            res.status(502).json({error: 'Unable to load Discord chapter notification settings.'})
+        }
+    })
+
+    app.put('/api/settings/discord/chapter-notifications', async (req, res) => {
+        if (!vaultClient?.mongo?.update) {
+            res.status(503).json({error: 'Vault storage is not configured.'})
+            return
+        }
+
+        try {
+            const setting = await writeDiscordChapterNotificationSettings(req.body ?? {})
+            res.json(buildDiscordChapterNotificationResponse(setting))
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unable to update Discord chapter notification settings.'
+            const status =
+                message === 'enabled must be a boolean value.'
+                || message === 'channelId must not be empty when Discord chapter posts are enabled.'
+                    ? 400
+                    : 502
+            logger.error(`[${serviceName}] Failed to update Discord chapter notification settings: ${message}`)
+            res.status(status).json({error: message})
+        }
+    })
+
+    app.get('/api/settings/downloads/limits', async (_req, res) => {
+        if (!vaultClient?.mongo?.findOne) {
+            res.status(503).json({error: 'Vault storage is not configured.'})
+            return
+        }
+
+        try {
+            const settings = await readDownloadLimitsSettings()
+            res.json({
+                key: settings?.key || DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+                overallSpeedLimitKbps:
+                    Number.isFinite(Number(settings?.overallSpeedLimitKbps))
+                        ? Math.max(0, Math.floor(Number(settings.overallSpeedLimitKbps)))
+                        : DEFAULT_DOWNLOAD_LIMITS_SETTINGS.overallSpeedLimitKbps,
+                updatedAt: settings?.updatedAt || null,
+            })
+        } catch (error) {
+            logger.error(`[${serviceName}] Failed to load download limits: ${error.message}`)
+            res.status(502).json({error: 'Unable to load download limits.'})
+        }
+    })
+
+    app.put('/api/settings/downloads/limits', async (req, res) => {
+        if (!vaultClient?.mongo?.update) {
+            res.status(503).json({error: 'Vault storage is not configured.'})
+            return
+        }
+
+        const parsedOverallSpeedLimit = validateOverallSpeedLimitInput(req.body?.overallSpeedLimitKbps)
+        if (!parsedOverallSpeedLimit.ok) {
+            res.status(400).json({error: parsedOverallSpeedLimit.error})
+            return
+        }
+
+        try {
+            const settings = await writeDownloadLimitsSettings(parsedOverallSpeedLimit.overallSpeedLimitKbps)
+            res.json({
+                key: settings?.key || DEFAULT_DOWNLOAD_LIMITS_SETTINGS.key,
+                overallSpeedLimitKbps:
+                    Number.isFinite(Number(settings?.overallSpeedLimitKbps))
+                        ? Math.max(0, Math.floor(Number(settings.overallSpeedLimitKbps)))
+                        : DEFAULT_DOWNLOAD_LIMITS_SETTINGS.overallSpeedLimitKbps,
+                updatedAt: settings?.updatedAt || null,
+            })
+        } catch (error) {
+            logger.error(`[${serviceName}] Failed to update download limits: ${error.message}`)
+            res.status(502).json({error: 'Unable to update download limits.'})
         }
     })
 

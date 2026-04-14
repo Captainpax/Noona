@@ -27,17 +27,19 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl openvpn iproute2 \
+  && apt-get install -y --no-install-recommends curl openvpn iproute2 python3 \
   && rm -rf /var/lib/apt/lists/*
 
 ENV SERVER_PORT=8080
 ENV APPDATA=/app/downloads
 
 COPY --from=builder /noona/services/raven/build/libs/raven-*.jar /app/app.jar
+COPY utilities/etc/warden_runtime_bootstrap.py /app/warden_runtime_bootstrap.py
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
   CMD curl -fsS http://localhost:8080/v1/library/health > /dev/null || exit 1
 
+ENTRYPOINT ["python3", "/app/warden_runtime_bootstrap.py", "--"]
 CMD ["java", "-jar", "/app/app.jar"]

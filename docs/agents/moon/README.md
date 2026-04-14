@@ -14,8 +14,8 @@ workflows, and the browser-side experience for recommendations and subscriptions
   The v3 setup profile, setup gates, Discord callback flow, bootstrap deprecation, AppShell mode switching, and reboot
   monitor session state.
 - [discord-onboarding-message.md](discord-onboarding-message.md)
-  The admin-facing onboarding template editor, Sage persistence path, preview placeholder sources, and the current
-  manual copy boundary.
+  The admin-facing onboarding template editor, onboarding-channel and invite-URL flow, Sage persistence path,
+  preview placeholder sources, and Portal's join-triggered send behavior.
 - [flows.md](flows.md)
   The high-value setup, settings, reboot, download, and Kavita handoff flows.
 
@@ -33,6 +33,9 @@ workflows, and the browser-side experience for recommendations and subscriptions
 - Moon's information architecture is intentionally task-based.
   Setup, settings, downloads, and users should not drift back to a service-name-first UI unless the redesign is
   intentional.
+- Mongo, Redis, and Vault stay implicit in Moon's public setup wizard.
+  The wizard should describe their storage footprint and always-on role without turning them into normal public
+  selection toggles.
 - Setup completion drives the page gates.
   The wizard pages stay accessible only while setup is incomplete, and the main app routes redirect back to the wizard
   until setup is marked complete.

@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/VaultService.java
  * - src/main/java/com/paxkun/raven/service/DownloadService.java
  * - src/main/java/com/paxkun/raven/service/VPNServices.java
- * Times this file has been edited: 9
+ * Times this file has been edited: 10
  */
 package com.paxkun.raven.service.settings;
 
@@ -14,7 +14,6 @@ import com.paxkun.raven.service.VaultService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -26,20 +25,21 @@ public class SettingsService {
 
     private static final String SETTINGS_COLLECTION = "noona_settings";
     private static final String NAMING_KEY = "downloads.naming";
-    private static final String WORKERS_KEY = "downloads.workers";
+    private static final String LIMITS_KEY = "downloads.limits";
+    private static final String LEGACY_WORKERS_KEY = "downloads.workers";
     private static final String VPN_KEY = "downloads.vpn";
     private static final long CACHE_TTL_MS = 5000L;
     private static final long WARNING_COOLDOWN_MS = 30000L;
     private final VaultService vaultService;
     private final LoggerService logger;
     private volatile DownloadNamingSettings cachedNaming;
-    private volatile DownloadWorkerSettings cachedWorkerSettings;
+    private volatile DownloadLimitsSettings cachedLimitsSettings;
     private volatile DownloadVpnSettings cachedVpnSettings;
     private volatile long cachedAtMs;
-    private volatile long cachedWorkerSettingsAtMs;
+    private volatile long cachedLimitsSettingsAtMs;
     private volatile long cachedVpnSettingsAtMs;
     private volatile long lastNamingWarningAtMs;
-    private volatile long lastWorkerWarningAtMs;
+    private volatile long lastLimitsWarningAtMs;
     private volatile long lastVpnWarningAtMs;
 
     /**
@@ -62,22 +62,21 @@ public class SettingsService {
     }
 
     /**
-     * Returns download worker settings.
+     * Returns download limits settings.
      *
-     * @param threadCount The thread count.
-     * @return The resulting DownloadWorkerSettings.
+     * @return The resulting DownloadLimitsSettings.
      */
 
-    public synchronized DownloadWorkerSettings getDownloadWorkerSettings(int threadCount) {
+    public synchronized DownloadLimitsSettings getDownloadLimitsSettings() {
         long now = System.currentTimeMillis();
-        DownloadWorkerSettings current = cachedWorkerSettings;
-        if (current != null && now - cachedWorkerSettingsAtMs < CACHE_TTL_MS) {
-            return mergeWorkerSettings(current, threadCount);
+        DownloadLimitsSettings current = cachedLimitsSettings;
+        if (current != null && now - cachedLimitsSettingsAtMs < CACHE_TTL_MS) {
+            return current;
         }
 
-        DownloadWorkerSettings loaded = loadWorkerSettings(threadCount);
-        cachedWorkerSettings = loaded;
-        cachedWorkerSettingsAtMs = now;
+        DownloadLimitsSettings loaded = loadLimitsSettings();
+        cachedLimitsSettings = loaded;
+        cachedLimitsSettingsAtMs = now;
         return loaded;
     }
 
@@ -134,16 +133,16 @@ public class SettingsService {
         }
     }
 
-    private DownloadWorkerSettings loadWorkerSettings(int threadCount) {
+    private DownloadLimitsSettings loadLimitsSettings() {
         try {
-            Map<String, Object> doc = vaultService.findOne(SETTINGS_COLLECTION, Map.of("key", WORKERS_KEY));
-            DownloadWorkerSettings parsed = doc != null ? vaultService.parseJson(doc, DownloadWorkerSettings.class) : null;
-            return mergeWorkerSettings(parsed, threadCount);
+            Map<String, Object> doc = vaultService.findOne(SETTINGS_COLLECTION, Map.of("key", LIMITS_KEY));
+            DownloadLimitsSettings parsed = doc != null ? vaultService.parseJson(doc, DownloadLimitsSettings.class) : null;
+            return mergeLimitsSettingsWithDefaults(parsed, resolveLegacyOverallSpeedLimitKbps());
         } catch (Exception e) {
-            if (shouldLogWorkerWarning()) {
-                logger.warn("SETTINGS", "⚠️ Failed to load download worker settings, using defaults: " + e.getMessage());
+            if (shouldLogLimitsWarning()) {
+                logger.warn("SETTINGS", "⚠️ Failed to load download limits settings, using defaults: " + e.getMessage());
             }
-            return mergeWorkerSettings(null, threadCount);
+            return mergeLimitsSettingsWithDefaults(null, resolveLegacyOverallSpeedLimitKbps());
         }
     }
 
@@ -170,13 +169,13 @@ public class SettingsService {
         return true;
     }
 
-    private boolean shouldLogWorkerWarning() {
+    private boolean shouldLogLimitsWarning() {
         long now = System.currentTimeMillis();
-        if (now - lastWorkerWarningAtMs < WARNING_COOLDOWN_MS) {
+        if (now - lastLimitsWarningAtMs < WARNING_COOLDOWN_MS) {
             return false;
         }
 
-        lastWorkerWarningAtMs = now;
+        lastLimitsWarningAtMs = now;
         return true;
     }
 
@@ -222,31 +221,42 @@ public class SettingsService {
         return out;
     }
 
-    private DownloadWorkerSettings mergeWorkerSettings(DownloadWorkerSettings input, int threadCount) {
-        DownloadWorkerSettings out = input != null ? input : new DownloadWorkerSettings();
-        out.setKey(WORKERS_KEY);
+    private DownloadLimitsSettings mergeLimitsSettingsWithDefaults(
+            DownloadLimitsSettings input,
+            int legacyFallbackOverallSpeedLimitKbps
+    ) {
+        DownloadLimitsSettings out = input != null ? input : new DownloadLimitsSettings();
+        out.setKey(LIMITS_KEY);
 
-        int normalizedThreadCount = Math.max(1, threadCount);
-        List<Integer> nextRateLimits = new java.util.ArrayList<>();
-        List<Integer> nextCpuCoreIds = new java.util.ArrayList<>();
-        List<Integer> currentRateLimits = out.getThreadRateLimitsKbps();
-        List<Integer> currentCpuCoreIds = out.getCpuCoreIds();
-
-        for (int index = 0; index < normalizedThreadCount; index++) {
-            Integer current = currentRateLimits != null && index < currentRateLimits.size()
-                    ? currentRateLimits.get(index)
-                    : 0;
-            nextRateLimits.add(current != null && current > 0 ? current : 0);
-
-            Integer cpuCoreId = currentCpuCoreIds != null && index < currentCpuCoreIds.size()
-                    ? currentCpuCoreIds.get(index)
-                    : -1;
-            nextCpuCoreIds.add(cpuCoreId != null && cpuCoreId >= 0 ? cpuCoreId : -1);
+        Integer limit = out.getOverallSpeedLimitKbps();
+        if (limit == null) {
+            limit = legacyFallbackOverallSpeedLimitKbps;
         }
-
-        out.setThreadRateLimitsKbps(nextRateLimits);
-        out.setCpuCoreIds(nextCpuCoreIds);
+        out.setOverallSpeedLimitKbps(limit != null && limit > 0 ? limit : 0);
         return out;
+    }
+
+    private int resolveLegacyOverallSpeedLimitKbps() {
+        try {
+            Map<String, Object> legacyDoc = vaultService.findOne(SETTINGS_COLLECTION, Map.of("key", LEGACY_WORKERS_KEY));
+            DownloadWorkerSettings legacy = legacyDoc != null ? vaultService.parseJson(legacyDoc, DownloadWorkerSettings.class) : null;
+            if (legacy == null || legacy.getThreadRateLimitsKbps() == null) {
+                return 0;
+            }
+
+            int total = 0;
+            for (Integer rateLimit : legacy.getThreadRateLimitsKbps()) {
+                if (rateLimit != null && rateLimit > 0) {
+                    total += rateLimit;
+                }
+            }
+            return Math.max(total, 0);
+        } catch (Exception e) {
+            if (shouldLogLimitsWarning()) {
+                logger.warn("SETTINGS", "⚠️ Failed to read legacy download worker settings fallback: " + e.getMessage());
+            }
+            return 0;
+        }
     }
 
     private DownloadVpnSettings mergeVpnSettingsWithDefaults(DownloadVpnSettings input) {

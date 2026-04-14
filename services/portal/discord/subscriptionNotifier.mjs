@@ -5,7 +5,7 @@
  * - clients/vaultClient.mjs
  * - tests/subscriptionNotifier.test.mjs
  * - app/portalRuntime.mjs
- * Times this file has been edited: 2
+ * Times this file has been edited: 3
  */
 
 const DEFAULT_SUBSCRIPTIONS_COLLECTION = 'portal_subscriptions';
@@ -374,10 +374,10 @@ export const createSubscriptionNotifier = ({
             const chapterLabel = formatChapterLabel(event?.chapterNumber);
             const sourceUrl = normalizeUrlForCompare(entry?.sourceUrl || event?.task?.sourceUrl);
             const lines = [
-                `New chapter downloaded for **${title}**: ${chapterLabel}.`,
+                `Noona finished downloading a new chapter for **${title}**: ${chapterLabel}.`,
             ];
             if (sourceUrl) {
-                lines.push(`Source: ${sourceUrl}`);
+                lines.push(`Source page: ${sourceUrl}`);
             }
 
             try {

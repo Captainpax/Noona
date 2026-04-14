@@ -17,6 +17,10 @@
 
 mkdir -p /kavita/config
 
+if [ -f "/warden_runtime_bootstrap.py" ] && command -v python3 >/dev/null 2>&1; then
+    eval "$(python3 /warden_runtime_bootstrap.py --print-shell)"
+fi
+
 should_start_noona_kavita_admin_bootstrap() {
     case "${NOONA_BOOTSTRAP_ADMIN_ON_START:-}" in
         1|true|TRUE|yes|YES|on|ON)

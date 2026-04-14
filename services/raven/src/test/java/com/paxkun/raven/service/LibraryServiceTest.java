@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/library/NewChapter.java
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/service/LibraryService.java
- * Times this file has been edited: 17
+ * Times this file has been edited: 18
  */
 package com.paxkun.raven.service;
 
@@ -21,6 +21,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,8 +30,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -61,6 +61,16 @@ class LibraryServiceTest {
 
     @Captor
     private ArgumentCaptor<Map<String, Object>> mapCaptor;
+
+    private void stubQueuedTrackedTaskExecution() {
+        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString(), anyBoolean()))
+                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(2);
+            task.run();
+            return null;
+        }).when(downloadService).queueTrackedTask(anyString(), any(DownloadProgress.class), any(Runnable.class));
+    }
 
     @Test
     void addOrUpdateTitlePersistsToVaultAndLogs() {
@@ -205,6 +215,102 @@ class LibraryServiceTest {
     }
 
     @Test
+    void deleteTitleRemovesManagedFolderAndArchivesRecord() throws Exception {
+        Path titleFolder = tempDir.resolve("downloaded").resolve("manhwa").resolve("Solo Leveling");
+        Files.createDirectories(titleFolder);
+        Files.writeString(titleFolder.resolve("Solo Leveling c001 [Noona].cbz"), "cbz");
+        Map<String, Object> storedDoc = Map.of("uuid", "uuid-delete");
+
+        NewTitle title = new NewTitle();
+        title.setUuid("uuid-delete");
+        title.setTitleName("Solo Leveling");
+        title.setType("Manhwa");
+        title.setDownloadPath(titleFolder.toString());
+
+        when(vaultService.findOne(eq("manga_library"), anyMap())).thenReturn(storedDoc);
+        when(vaultService.parseJson(storedDoc, NewTitle.class)).thenReturn(title);
+        when(loggerService.getDownloadsRoot()).thenReturn(tempDir);
+
+        boolean deleted = libraryService.deleteTitle("uuid-delete");
+
+        assertThat(deleted).isTrue();
+        assertThat(Files.exists(titleFolder)).isFalse();
+        assertThat(Files.exists(titleFolder.getParent())).isFalse();
+        verify(vaultService).update(eq("manga_library"), eq(Map.of("uuid", "uuid-delete")), mapCaptor.capture(), eq(false));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> set = (Map<String, Object>) mapCaptor.getValue().get("$set");
+        assertThat(set).containsKey("deletedAt");
+    }
+
+    @Test
+    void deleteTitleStillArchivesWhenManagedFolderIsAlreadyMissing() {
+        Path missingFolder = tempDir.resolve("downloaded").resolve("manhwa").resolve("Solo Leveling");
+        Map<String, Object> storedDoc = Map.of("uuid", "uuid-missing-delete");
+
+        NewTitle title = new NewTitle();
+        title.setUuid("uuid-missing-delete");
+        title.setTitleName("Solo Leveling");
+        title.setType("Manhwa");
+        title.setDownloadPath(missingFolder.toString());
+
+        when(vaultService.findOne(eq("manga_library"), anyMap())).thenReturn(storedDoc);
+        when(vaultService.parseJson(storedDoc, NewTitle.class)).thenReturn(title);
+
+        boolean deleted = libraryService.deleteTitle("uuid-missing-delete");
+
+        assertThat(deleted).isTrue();
+        verify(vaultService).update(eq("manga_library"), eq(Map.of("uuid", "uuid-missing-delete")), anyMap(), eq(false));
+    }
+
+    @Test
+    void deleteTitleLeavesRecordActiveWhenFolderDeletionFails() throws Exception {
+        Path titleFolder = tempDir.resolve("downloaded").resolve("manhwa").resolve("Solo Leveling");
+        Files.createDirectories(titleFolder);
+        when(loggerService.getDownloadsRoot()).thenReturn(tempDir);
+
+        NewTitle title = new NewTitle();
+        title.setUuid("uuid-delete-fail");
+        title.setTitleName("Solo Leveling");
+        title.setType("Manhwa");
+        title.setDownloadPath(titleFolder.toString());
+
+        LibraryService spyLibraryService = spy(new LibraryService(vaultService, downloadService, loggerService, kavitaSyncService));
+        doReturn(title).when(spyLibraryService).getTitleByUuid("uuid-delete-fail");
+        doThrow(new IOException("disk busy")).when(spyLibraryService).deleteTitleFolder(titleFolder);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> spyLibraryService.deleteTitle("uuid-delete-fail"));
+
+        assertThat(error).hasMessageContaining("Failed to delete Raven title folder");
+        verify(vaultService, never()).update(eq("manga_library"), eq(Map.of("uuid", "uuid-delete-fail")), anyMap(), eq(false));
+    }
+
+    @Test
+    void getTitleByUuidReconcilesDownloadedIndexFromDisk() throws Exception {
+        Path titleFolder = tempDir.resolve("downloaded").resolve("manhwa").resolve("Solo Leveling");
+        Files.createDirectories(titleFolder);
+        Files.createFile(titleFolder.resolve("Solo Leveling c001 [Noona].cbz"));
+
+        Map<String, Object> stored = Map.of("uuid", "uuid-reconcile");
+        NewTitle title = new NewTitle();
+        title.setUuid("uuid-reconcile");
+        title.setTitleName("Solo Leveling");
+        title.setType("Manhwa");
+        title.setDownloadPath(titleFolder.toString());
+        title.setLastDownloaded("0");
+
+        when(vaultService.findOne(eq("manga_library"), eq(Map.of("uuid", "uuid-reconcile", "deletedAt", Map.of("$exists", false)))))
+                .thenReturn(stored);
+        when(vaultService.parseJson(eq(stored), eq(NewTitle.class))).thenReturn(title);
+
+        NewTitle reconciled = libraryService.getTitleByUuid("uuid-reconcile");
+
+        assertThat(reconciled.getDownloadedChapterNumbers()).containsExactly("1");
+        assertThat(reconciled.getDownloadedChapterFiles()).containsEntry("1", "Solo Leveling c001 [Noona].cbz");
+        assertThat(reconciled.getChaptersDownloaded()).isEqualTo(1);
+        assertThat(reconciled.getLastDownloaded()).isEqualTo("1");
+    }
+
+    @Test
     void checkForNewChaptersReturnsWarningWhenNoTitles() {
         when(vaultService.findMany(eq("manga_library"), anyMap())).thenReturn(List.of());
         when(vaultService.parseDocuments(anyList(), any(Type.class))).thenReturn(Collections.emptyList());
@@ -220,6 +326,63 @@ class LibraryServiceTest {
     }
 
     @Test
+    void checkForNewChaptersByUuidReturnsQueuedPlanBeforeBackgroundSyncRuns() {
+        Map<String, Object> stored = Map.of("uuid", "uuid-queued");
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setUuid("uuid-queued");
+        title.setSourceUrl("http://solo");
+        title.setLastDownloaded("1");
+        title.setDownloadedChapterNumbers(new ArrayList<>(List.of("1")));
+
+        when(vaultService.findOne(eq("manga_library"), eq(Map.of("uuid", "uuid-queued", "deletedAt", Map.of("$exists", false)))))
+                .thenReturn(stored);
+        when(vaultService.parseJson(eq(stored), eq(NewTitle.class))).thenReturn(title);
+        when(downloadService.fetchChapters("http://solo")).thenReturn(List.of(
+                Map.of("chapter_number", "1", "chapter_title", "Chapter 1", "href", "http://solo/1"),
+                Map.of("chapter_number", "2", "chapter_title", "Chapter 2", "href", "http://solo/2")
+        ));
+        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString(), anyBoolean()))
+                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        doNothing().when(downloadService).queueTrackedTask(eq("Solo Leveling"), any(DownloadProgress.class), runnableCaptor.capture());
+        when(downloadService.downloadSingleChapter(eq(title), eq("2"), any())).thenReturn(true);
+
+        LibraryService.TitleSyncResult result = libraryService.checkForNewChaptersByUuid("uuid-queued");
+
+        assertThat(result.status()).isEqualTo("queued");
+        assertThat(result.totalQueued()).isEqualTo(1);
+        assertThat(result.newChaptersQueued()).isEqualTo(1);
+        verify(downloadService, never()).downloadSingleChapter(any(NewTitle.class), anyString(), any());
+
+        runnableCaptor.getValue().run();
+
+        verify(downloadService).downloadSingleChapter(eq(title), eq("2"), any());
+        assertThat(title.getLastDownloaded()).isEqualTo("2");
+    }
+
+    @Test
+    void checkForNewChaptersByUuidSkipsWhenTaskAlreadyActive() {
+        Map<String, Object> stored = Map.of("uuid", "uuid-active");
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setUuid("uuid-active");
+        title.setSourceUrl("http://solo");
+        title.setLastDownloaded("1");
+
+        when(vaultService.findOne(eq("manga_library"), eq(Map.of("uuid", "uuid-active", "deletedAt", Map.of("$exists", false)))))
+                .thenReturn(stored);
+        when(vaultService.parseJson(eq(stored), eq(NewTitle.class))).thenReturn(title);
+        when(downloadService.isTaskActive("Solo Leveling")).thenReturn(true);
+
+        LibraryService.TitleSyncResult result = libraryService.checkForNewChaptersByUuid("uuid-active");
+
+        assertThat(result.status()).isEqualTo("skipped");
+        assertThat(result.message()).contains("already has an active Raven task");
+        verify(downloadService, never()).fetchChapters(anyString());
+    }
+
+    @Test
     void checkForNewChaptersDownloadsAndUpdatesWhenNewChaptersFound() {
         NewTitle title = new NewTitle();
         title.setTitleName("Omniscient Reader");
@@ -232,8 +395,7 @@ class LibraryServiceTest {
         when(downloadService.fetchChapters(title.getSourceUrl())).thenReturn(List.of(
                 Map.of("chapter_number", "2", "chapter_title", "Chapter 2", "href", "http://omniscient/2")
         ));
-        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString()))
-                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        stubQueuedTrackedTaskExecution();
         when(downloadService.downloadSingleChapter(eq(title), eq("2"), any())).thenReturn(true);
 
         LibraryService.LibrarySyncSummary result = libraryService.checkForNewChapters();
@@ -259,6 +421,34 @@ class LibraryServiceTest {
     }
 
     @Test
+    void checkForNewChaptersDoesNotStackLibraryChecks() {
+        NewTitle title = new NewTitle();
+        title.setTitleName("Omniscient Reader");
+        title.setUuid("uuid-library-active");
+        title.setSourceUrl("http://omniscient");
+        title.setLastDownloaded("1");
+
+        when(vaultService.findMany(eq("manga_library"), anyMap())).thenReturn(List.of(Map.of("title", title.getTitleName())));
+        when(vaultService.parseDocuments(anyList(), any(Type.class))).thenReturn(List.of(title));
+        when(downloadService.fetchChapters(title.getSourceUrl())).thenReturn(List.of(
+                Map.of("chapter_number", "2", "chapter_title", "Chapter 2", "href", "http://omniscient/2")
+        ));
+        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString(), anyBoolean()))
+                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        doNothing().when(downloadService).queueTrackedTask(anyString(), any(DownloadProgress.class), any(Runnable.class));
+
+        LibraryService.LibrarySyncSummary first = libraryService.checkForNewChapters();
+        LibraryService.LibrarySyncSummary second = libraryService.checkForNewChapters();
+
+        assertEquals(1, first.queuedChapters());
+        assertEquals("Queued 1 chapter(s) across 1 title(s).", first.message());
+        assertEquals(0, second.queuedChapters());
+        assertThat(second.message()).contains("already queued or running");
+        verify(downloadService, never()).downloadSingleChapter(any(NewTitle.class), anyString(), any());
+        verify(downloadService, times(1)).queueTrackedTask(eq("Omniscient Reader"), any(DownloadProgress.class), any(Runnable.class));
+    }
+
+    @Test
     void checkForNewChaptersTreatsFractionalChaptersAsDistinctAndUpdatesLastDownloaded() {
         NewTitle title = new NewTitle();
         title.setTitleName("Solo Leveling");
@@ -275,8 +465,7 @@ class LibraryServiceTest {
                 Map.of("chapter_number", "101.1", "chapter_title", "Chapter 101.1", "href", "http://solo/101-1"),
                 Map.of("chapter_number", "101.5", "chapter_title", "Chapter 101.5", "href", "http://solo/101-5")
         ));
-        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString()))
-                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        stubQueuedTrackedTaskExecution();
         when(downloadService.downloadSingleChapter(eq(title), eq("101.1"), any())).thenReturn(true);
         when(downloadService.downloadSingleChapter(eq(title), eq("101.5"), any())).thenReturn(true);
 
@@ -338,8 +527,7 @@ class LibraryServiceTest {
                 Map.of("chapter_number", "1", "chapter_title", "Chapter 1", "href", "http://86/1"),
                 Map.of("chapter_number", "2", "chapter_title", "Chapter 2", "href", "http://86/2")
         ));
-        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString()))
-                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        stubQueuedTrackedTaskExecution();
         when(downloadService.downloadSingleChapter(eq(title), eq("2"), any())).thenReturn(true);
 
         LibraryService.LibrarySyncSummary result = libraryService.checkForNewChapters();
@@ -401,8 +589,7 @@ class LibraryServiceTest {
                 Map.of("chapter_number", "1", "chapter_title", "Chapter 1", "href", "http://solo/1"),
                 Map.of("chapter_number", "2", "chapter_title", "Chapter 2", "href", "http://solo/2")
         ));
-        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString()))
-                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        stubQueuedTrackedTaskExecution();
         when(downloadService.downloadSingleChapter(argThat((NewTitle entry) -> "Solo Leveling".equals(entry.getTitleName())), eq("2"), any()))
                 .thenReturn(true);
 
@@ -447,8 +634,7 @@ class LibraryServiceTest {
                 Map.of("chapter_number", "1", "chapter_title", "Chapter 1", "href", "http://solo/1"),
                 Map.of("chapter_number", "2", "chapter_title", "Chapter 2", "href", "http://solo/2")
         ));
-        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString()))
-                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        stubQueuedTrackedTaskExecution();
         when(downloadService.downloadSingleChapter(eq(title), eq("2"), any())).thenReturn(true);
 
         LibraryService.LibrarySyncSummary result = libraryService.checkForNewChapters();
@@ -724,8 +910,7 @@ class LibraryServiceTest {
         when(downloadService.fetchChapters("http://tbate")).thenReturn(List.of(
                 Map.of("chapter_number", "24", "chapter_title", "Chapter 24", "href", "http://tbate/24")
         ));
-        when(downloadService.startTrackedTask(any(NewTitle.class), anyString(), anyList(), anyList(), anyList(), anyString(), anyInt(), anyString()))
-                .thenAnswer(invocation -> new DownloadProgress(invocation.<NewTitle>getArgument(0).getTitleName()));
+        stubQueuedTrackedTaskExecution();
 
         List<NewTitle> titles = libraryService.getAllTitleObjects();
         assertThat(titles).hasSize(1);

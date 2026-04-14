@@ -238,7 +238,10 @@ export const createRavenClient = ({
                 method: 'POST',
                 headers: {Accept: 'application/json'},
             })
-            return await parseResponsePayload(response)
+            return {
+                status: response.status,
+                payload: await parseResponsePayload(response),
+            }
         },
 
         async checkAvailableLibraryImports() {
@@ -280,7 +283,10 @@ export const createRavenClient = ({
                 return null
             }
 
-            return await parseResponsePayload(response)
+            return {
+                status: response.status,
+                payload: await parseResponsePayload(response),
+            }
         },
 
         async createTitle({title, sourceUrl} = {}) {
@@ -432,7 +438,7 @@ export const createRavenClient = ({
             return await parseResponsePayload(response)
         },
 
-        async queueDownloadDetailed({searchId, optionIndex} = {}) {
+        async queueDownloadDetailed({searchId, optionIndex, allowDownloadWithoutVpn} = {}) {
             if (!searchId || typeof searchId !== 'string') {
                 throw new Error('searchId must be provided.')
             }
@@ -442,12 +448,17 @@ export const createRavenClient = ({
                 throw new Error('optionIndex must be a number.')
             }
 
+            const payload = {searchId, optionIndex: normalizedIndex}
+            if (typeof allowDownloadWithoutVpn === 'boolean') {
+                payload.allowDownloadWithoutVpn = allowDownloadWithoutVpn
+            }
+
             const response = await fetchFromRaven(
                 '/v1/download/select',
                 {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json', Accept: 'application/json'},
-                    body: JSON.stringify({searchId, optionIndex: normalizedIndex}),
+                    body: JSON.stringify(payload),
                 },
                 {acceptStatuses: [400, 409, 410]},
             )
@@ -457,8 +468,8 @@ export const createRavenClient = ({
             }
         },
 
-        async queueDownload({searchId, optionIndex} = {}) {
-            const result = await this.queueDownloadDetailed({searchId, optionIndex})
+        async queueDownload({searchId, optionIndex, allowDownloadWithoutVpn} = {}) {
+            const result = await this.queueDownloadDetailed({searchId, optionIndex, allowDownloadWithoutVpn})
             if (result.status === 202) {
                 return result.payload
             }

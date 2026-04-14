@@ -20,6 +20,7 @@ class FakeClient extends EventEmitter {
         this.destroyed = false;
         this.lastLoginToken = null;
         this.directMessages = [];
+        this.channelMessages = [];
         this.application = {
             commands: {
                 calls: [],
@@ -60,6 +61,19 @@ class FakeClient extends EventEmitter {
                         payload,
                     };
                     this.directMessages.push({userId, payload, message});
+                    return message;
+                },
+            }),
+        };
+        this.channels = {
+            fetch: async channelId => ({
+                id: channelId,
+                send: async payload => {
+                    const message = {
+                        id: `channel-${this.channelMessages.length + 1}`,
+                        payload,
+                    };
+                    this.channelMessages.push({channelId, payload, message});
                     return message;
                 },
             }),
@@ -257,6 +271,37 @@ test('createDiscordClient routes DM messages to the optional direct message hand
     assert.deepEqual(directMessages, [message]);
 });
 
+test('createDiscordClient routes guild member joins to the optional handler', async () => {
+    const fakeClient = new FakeClient();
+    fakeClient.user = {tag: 'TestBot#0001'};
+    const joinedMembers = [];
+
+    const discord = createDiscordClient({
+        token: 'test-token',
+        guildId: 'guild-123',
+        clientId: 'client-abc',
+        commands: new Map(),
+        clientFactory: () => fakeClient,
+        guildMemberAddHandler: async member => {
+            joinedMembers.push(member);
+        },
+    });
+
+    const loginPromise = discord.login();
+    await emitAndWait(fakeClient, Events.ClientReady, fakeClient);
+    await loginPromise;
+
+    const member = {
+        id: 'member-123',
+        user: {id: 'member-123', bot: false},
+        guild: {id: 'guild-123', name: 'Noona'},
+    };
+
+    await emitAndWait(fakeClient, Events.GuildMemberAdd, member);
+
+    assert.deepEqual(joinedMembers, [member]);
+});
+
 test('interaction handler responds when slash command has no registered handler', async () => {
     const fakeClient = new FakeClient();
     fakeClient.user = {tag: 'TestBot#0001'};
@@ -356,6 +401,35 @@ test('createDiscordClient sends direct messages through the Discord user client'
             message: {
                 id: 'dm-1',
                 payload: {content: 'Hello from Portal'},
+            },
+        },
+    ]);
+});
+
+test('createDiscordClient sends channel messages through the Discord channel client', async () => {
+    const fakeClient = new FakeClient();
+    fakeClient.user = {tag: 'TestBot#0001'};
+    const discord = createDiscordClient({
+        token: 'test-token',
+        guildId: 'guild-123',
+        clientId: 'client-abc',
+        commands: new Map(),
+        clientFactory: () => fakeClient,
+    });
+
+    const loginPromise = discord.login();
+    await emitAndWait(fakeClient, Events.ClientReady, fakeClient);
+    await loginPromise;
+
+    const message = await discord.sendChannelMessage('channel-1', {content: 'Welcome aboard'});
+    assert.equal(message.id, 'channel-1');
+    assert.deepEqual(fakeClient.channelMessages, [
+        {
+            channelId: 'channel-1',
+            payload: {content: 'Welcome aboard'},
+            message: {
+                id: 'channel-1',
+                payload: {content: 'Welcome aboard'},
             },
         },
     ]);

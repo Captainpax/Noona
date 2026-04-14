@@ -93,10 +93,18 @@
 
 - `registerSettingsRoutes.mjs` mounts `app.use('/api/settings', requireAdminSessionIfSetupCompleted)`.
   After setup completes, the entire settings surface expects an authenticated admin path.
+- `GET /api/discord/invite` is the signed-in safe companion route for the Moon home page.
+  It requires a normal session, returns only the saved public invite URL, and does not expose the admin settings
+  payload.
 - Debug updates write the setting in Vault, update Sage's live logger mode, and best-effort propagate to Warden,
   Raven, and Vault.
-- Download naming, worker settings, VPN config, and Discord onboarding message all persist into the settings
-  collection, not into Warden snapshots.
+- Download naming, download-limit settings, VPN config, and the Discord onboarding template plus channel id and invite
+  URL all persist into the settings collection, not into Warden snapshots.
+- Discord chapter-release post settings also persist into the settings collection.
+  When that toggle flips from disabled to enabled, Sage clears the notifier baseline markers so Portal can snapshot the
+  current Raven history and avoid replaying old chapter completions into Discord.
+- Sage keeps a short-lived compatibility alias for legacy `/downloads/workers` callers, but Moon should use
+  `/downloads/limits` for all new traffic.
 - VPN settings writes reject any provider other than `pia`.
 - `PUT /api/settings/downloads/vpn` now persists the draft first, then only asks Raven to reconnect when
   `applyNow=true` and either the connection-affecting fields changed (`enabled`, `region`, `piaUsername`,

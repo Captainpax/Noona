@@ -30,11 +30,15 @@
 - The wrapper exposes a few helpers used elsewhere in Portal:
   `fetchGuild()`,
   `fetchMember()`,
+  `fetchChannel()`,
   `assignDefaultRole()`,
+  `sendChannelMessage()`,
   `sendDirectMessage()`,
   `waitUntilReady()`
 - `assignDefaultRole()` uses the configured `DISCORD_GUILD_ROLE_ID` or `DISCORD_DEFAULT_ROLE_ID` when present.
   Route and onboarding helpers can call this without reaching into raw Discord.js objects.
+- The wrapper can also register an optional guild-member-add handler.
+  Portal uses that hook for join-triggered onboarding-channel posts.
 
 ## Command Registry
 

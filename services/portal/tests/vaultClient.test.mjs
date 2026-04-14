@@ -258,6 +258,46 @@ test('updateSubscription sends Mongo update packets for portal subscriptions', a
     });
 });
 
+test('readSetting queries Vault findOne for Portal runtime settings', async () => {
+    const calls = [];
+    const vault = createVaultClient({
+        baseUrl: 'http://noona-vault:3005',
+        token: 'vault-token',
+        fetchImpl: async (_url, options) => {
+            calls.push({options});
+            return new Response(JSON.stringify({
+                status: 'ok',
+                data: {
+                    key: 'discord.onboarding_message',
+                    template: 'Welcome {user_mention}',
+                    channelId: '12345',
+                },
+            }), {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+        },
+    });
+
+    const setting = await vault.readSetting({key: 'discord.onboarding_message'});
+
+    assert.deepEqual(setting, {
+        key: 'discord.onboarding_message',
+        template: 'Welcome {user_mention}',
+        channelId: '12345',
+    });
+    assert.deepEqual(JSON.parse(calls[0].options.body), {
+        storageType: 'mongo',
+        operation: 'findOne',
+        payload: {
+            collection: 'noona_settings',
+            query: {key: 'discord.onboarding_message'},
+        },
+    });
+});
+
 test('storeSubscription and updateSubscription validate payloads', async () => {
     const vault = createVaultClient({
         baseUrl: 'http://noona-vault:3005',

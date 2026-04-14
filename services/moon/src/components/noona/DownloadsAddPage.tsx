@@ -88,6 +88,7 @@ export function DownloadsAddPage({initialQuery = ""}: DownloadsAddPageProps) {
     const [queueError, setQueueError] = useState<string | null>(null);
     const [queueMessage, setQueueMessage] = useState<string | null>(null);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
+    const [allowDownloadWithoutVpn, setAllowDownloadWithoutVpn] = useState(false);
 
     const resolvedSearchOptions = useMemo<ResolvedSearchOption[]>(() => {
         if (!Array.isArray(searchResult?.options)) return [];
@@ -244,7 +245,11 @@ export function DownloadsAddPage({initialQuery = ""}: DownloadsAddPageProps) {
                     const res = await fetch("/api/noona/raven/download", {
                         method: "POST",
                         headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({searchId, optionIndex}),
+                        body: JSON.stringify({
+                            searchId,
+                            optionIndex,
+                            allowDownloadWithoutVpn,
+                        }),
                     });
 
                     const json = (await res.json().catch(() => null)) as RavenQueueResponse | null;
@@ -641,6 +646,30 @@ export function DownloadsAddPage({initialQuery = ""}: DownloadsAddPageProps) {
                                                 Tip: use <span className={styles.shortcutKey}>Ctrl+Enter</span> to queue
                                                 selected entries.
                                             </Text>
+                                            <label className={styles.vpnOverrideField}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={allowDownloadWithoutVpn}
+                                                    className={styles.selectionCheckbox}
+                                                    onChange={(event) => {
+                                                        setAllowDownloadWithoutVpn(event.target.checked);
+                                                    }}
+                                                />
+                                                <div className={styles.vpnOverrideText}>
+                                                    <Text variant="body-default-xs">
+                                                        Allow download without VPN
+                                                    </Text>
+                                                    <Text
+                                                        onBackground="neutral-weak"
+                                                        variant="body-default-xs"
+                                                        wrap="balance"
+                                                        className={styles.vpnOverrideHint}
+                                                    >
+                                                        Lets this queue run even when Raven&apos;s global VPN-only gate
+                                                        is enabled.
+                                                    </Text>
+                                                </div>
+                                            </label>
                                             {queueMessage && (
                                                 <Text onBackground="neutral-weak" variant="body-default-xs"
                                                       wrap="balance">

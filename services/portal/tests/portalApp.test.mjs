@@ -279,6 +279,128 @@ test('GET /api/portal/kavita/info prefers configured external Kavita URL for Moo
     }
 });
 
+test('POST /api/portal/discord/onboarding-message/test sends the requested preview text to the selected channel', async () => {
+    const sentMessages = [];
+    const app = createPortalApp({
+        config: {
+            serviceName: 'noona-portal',
+            discord: {
+                guildId: 'guild-1',
+            },
+        },
+        discord: {
+            sendChannelMessage: async (channelId, payload) => {
+                sentMessages.push({channelId, payload});
+                return {id: 'message-1'};
+            },
+        },
+    });
+    const {server, baseUrl} = await startServer(app);
+
+    try {
+        const response = await fetch(`${baseUrl}/api/portal/discord/onboarding-message/test`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                channelId: '123456789012345678',
+                content: 'Welcome to Noona Guild, @new-member!',
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.deepEqual(payload, {
+            ok: true,
+            channelId: '123456789012345678',
+        });
+        assert.deepEqual(sentMessages, [{
+            channelId: '123456789012345678',
+            payload: {
+                content: 'Welcome to Noona Guild, @new-member!',
+            },
+        }]);
+    } finally {
+        await stopServer(server);
+    }
+});
+
+test('POST /api/portal/discord/onboarding-message/test rejects missing channel ids and content', async () => {
+    const app = createPortalApp({
+        config: {
+            serviceName: 'noona-portal',
+            discord: {
+                guildId: 'guild-1',
+            },
+        },
+        discord: {
+            sendChannelMessage: async () => {
+                throw new Error('Discord should not be called');
+            },
+        },
+    });
+    const {server, baseUrl} = await startServer(app);
+
+    try {
+        const missingChannelResponse = await fetch(`${baseUrl}/api/portal/discord/onboarding-message/test`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                channelId: '  ',
+                content: 'Preview text',
+            }),
+        });
+        assert.equal(missingChannelResponse.status, 400);
+        assert.deepEqual(await missingChannelResponse.json(), {
+            error: 'channelId must not be empty.',
+        });
+
+        const missingContentResponse = await fetch(`${baseUrl}/api/portal/discord/onboarding-message/test`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                channelId: '123456789012345678',
+                content: ' \n ',
+            }),
+        });
+        assert.equal(missingContentResponse.status, 400);
+        assert.deepEqual(await missingContentResponse.json(), {
+            error: 'content must not be empty.',
+        });
+    } finally {
+        await stopServer(server);
+    }
+});
+
+test('POST /api/portal/discord/onboarding-message/test reports 503 when Discord messaging is unavailable', async () => {
+    const app = createPortalApp({
+        config: {
+            serviceName: 'noona-portal',
+            discord: {
+                guildId: 'guild-1',
+            },
+        },
+    });
+    const {server, baseUrl} = await startServer(app);
+
+    try {
+        const response = await fetch(`${baseUrl}/api/portal/discord/onboarding-message/test`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                channelId: '123456789012345678',
+                content: 'Preview text',
+            }),
+        });
+
+        assert.equal(response.status, 503);
+        assert.deepEqual(await response.json(), {
+            error: 'Discord messaging is not configured.',
+        });
+    } finally {
+        await stopServer(server);
+    }
+});
+
 test('POST /api/portal/kavita/noona-login provisions a Kavita account and returns a one-time login token', async () => {
     const kavitaCalls = [];
     const storedCredentials = [];
@@ -1875,6 +1997,86 @@ test('POST /api/portal/kavita/libraries/scan resolves a library by name and scan
         assert.equal(payload.success, true);
         assert.equal(payload.library.name, 'Manhwa');
         assert.equal(payload.force, true);
+    } finally {
+        await stopServer(server);
+    }
+});
+
+test('POST /api/portal/kavita/libraries/scan returns admin-key guidance when Kavita denies scan access', async () => {
+    const app = createPortalApp({
+        config: {
+            serviceName: 'noona-portal',
+            discord: {
+                guildId: 'guild-1',
+            },
+        },
+        kavita: {
+            fetchLibraries: async () => [
+                {id: 7, name: 'Manhwa'},
+            ],
+            scanLibrary: async () => {
+                const error = new Error('Kavita request failed with status 403: Forbidden');
+                error.status = 403;
+                throw error;
+            },
+        },
+    });
+    const {server, baseUrl} = await startServer(app);
+
+    try {
+        const response = await fetch(`${baseUrl}/api/portal/kavita/libraries/scan`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: 'Manhwa',
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 403);
+        assert.match(payload.error, /Manhwa/);
+        assert.match(payload.error, /KAVITA_API_KEY/);
+        assert.match(payload.error, /admin-capable Kavita account/i);
+    } finally {
+        await stopServer(server);
+    }
+});
+
+test('POST /api/portal/kavita/libraries/scan returns the resolved library name when Kavita cannot find it to scan', async () => {
+    const app = createPortalApp({
+        config: {
+            serviceName: 'noona-portal',
+            discord: {
+                guildId: 'guild-1',
+            },
+        },
+        kavita: {
+            fetchLibraries: async () => [
+                {id: 7, name: 'Manhwa'},
+            ],
+            scanLibrary: async () => {
+                const error = new Error('Kavita request failed with status 404: Not Found');
+                error.status = 404;
+                throw error;
+            },
+        },
+    });
+    const {server, baseUrl} = await startServer(app);
+
+    try {
+        const response = await fetch(`${baseUrl}/api/portal/kavita/libraries/scan`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: 'Manhwa',
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 404);
+        assert.match(payload.error, /Manhwa/);
+        assert.match(payload.error, /id=7/i);
+        assert.match(payload.error, /could not find it/i);
     } finally {
         await stopServer(server);
     }

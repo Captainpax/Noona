@@ -4,11 +4,19 @@
  * - app/portalRuntime.mjs
  * - config/portalConfig.mjs
  * - app/createPortalApp.mjs
- * Times this file has been edited: 5
+ * Times this file has been edited: 6
  */
 
 import {errMSG} from '../../utilities/etc/logger.mjs';
-import {createSignalHandler, startPortal, stopPortal} from './app/portalRuntime.mjs';
+import {loadServiceRuntimeConfig} from '../../utilities/etc/wardenRuntimeBootstrap.mjs';
+
+await loadServiceRuntimeConfig({
+    logger: {
+        warn: (message) => errMSG(message),
+    },
+});
+
+const {createSignalHandler, startPortal, stopPortal} = await import('./app/portalRuntime.mjs');
 
 const isDirectRun = (() => {
     if (!process.argv[1]) {

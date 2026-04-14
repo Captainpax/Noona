@@ -2,7 +2,8 @@
 
 ## Noona-Specific Runtime Inputs
 
-- `NOONA_BOOTSTRAP_ADMIN_ON_START`: opt-in flag for the managed first-admin helper.
+- `NOONA_BOOTSTRAP_ADMIN_ON_START`: server-managed flag that keeps the managed first-admin helper enabled for
+  `noona-kavita`.
 - `KAVITA_ADMIN_USERNAME`, `KAVITA_ADMIN_EMAIL`, `KAVITA_ADMIN_PASSWORD`: all-or-nothing bootstrap inputs.
 - `NOONA_MOON_BASE_URL`: preferred absolute Moon URL for the login handoff.
 - `NOONA_MOON_PORT`: fallback Moon port when Kavita needs to derive a local Moon URL.
@@ -20,6 +21,8 @@
   [account.service.ts](../../../services/kavita/UI/Web/src/app/_services/account.service.ts).
 - The server-side handoff logic lives in
   [AccountController.cs](../../../services/kavita/API/Controllers/AccountController.cs).
+- The same controller now blocks direct managed first-user registration unless the request matches the configured
+  bootstrap admin credentials, so Moon remains the supported interactive entrypoint.
 
 ## Integration Boundaries
 

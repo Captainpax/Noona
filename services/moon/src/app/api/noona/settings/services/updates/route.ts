@@ -2,6 +2,7 @@ import {NextResponse} from "next/server";
 import {jsonError, sageJson} from "../../../_backend";
 import {withNoonaAuthHeaders} from "../../../_auth";
 import {retryBackendRead} from "../../../backendReadRetry.mjs";
+import {formatServiceUpdateCheckErrorMessage, requestServiceUpdateCheckFromSage,} from "@/utils/serviceUpdates.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -28,15 +29,17 @@ export async function POST(request: Request) {
         return jsonError("Request body must be valid JSON.", 400);
     }
 
+    const requestBody = body && typeof body === "object" ? body : {};
+
     try {
-        const {status, payload} = await sageJson("/api/settings/services/updates/check", {
-            method: "POST",
-            headers: await withNoonaAuthHeaders({"Content-Type": "application/json"}),
-            body: JSON.stringify(body ?? {}),
+        const {status, payload} = await requestServiceUpdateCheckFromSage({
+            body: requestBody,
+            sageJsonImpl: sageJson,
+            withNoonaAuthHeadersImpl: withNoonaAuthHeaders,
         });
         return NextResponse.json(payload, {status});
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return jsonError(message);
+        return jsonError(formatServiceUpdateCheckErrorMessage(message));
     }
 }

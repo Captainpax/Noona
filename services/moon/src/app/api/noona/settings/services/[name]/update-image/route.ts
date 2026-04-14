@@ -1,6 +1,7 @@
 import {NextRequest, NextResponse} from "next/server";
 import {jsonError, sageJson} from "../../../../_backend";
 import {withNoonaAuthHeaders} from "../../../../_auth";
+import {formatServiceImageUpdateErrorMessage, requestServiceImageUpdateFromSage,} from "@/utils/serviceUpdates.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -19,15 +20,18 @@ export async function POST(request: NextRequest, context: { params: Promise<{ na
         return jsonError("Request body must be valid JSON.", 400);
     }
 
+    const requestBody = body && typeof body === "object" ? body : {};
+
     try {
-        const {status, payload} = await sageJson(`/api/settings/services/${encodeURIComponent(name)}/update-image`, {
-            method: "POST",
-            headers: await withNoonaAuthHeaders({"Content-Type": "application/json"}),
-            body: JSON.stringify(body ?? {}),
+        const {status, payload} = await requestServiceImageUpdateFromSage({
+            serviceName: name,
+            body: requestBody,
+            sageJsonImpl: sageJson,
+            withNoonaAuthHeadersImpl: withNoonaAuthHeaders,
         });
         return NextResponse.json(payload, {status});
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return jsonError(message);
+        return jsonError(formatServiceImageUpdateErrorMessage(message));
     }
 }

@@ -4,7 +4,7 @@
  * - commands/index.mjs
  * - commands/utils.mjs
  * - tests/discordCommands.test.mjs
- * Times this file has been edited: 2
+ * Times this file has been edited: 3
  */
 
 import {ApplicationCommandOptionType, MessageFlags} from 'discord.js';
@@ -247,11 +247,11 @@ export const createSubscribeCommand = ({
                                        } = {}) => ({
     definition: {
         name: 'subscribe',
-        description: 'Subscribe to a title and get DMs for newly downloaded chapters.',
+        description: 'Subscribe to a title and get DMs when Noona finishes new chapters.',
         options: [
             {
                 name: 'title',
-                description: 'Title to subscribe to for chapter download DMs.',
+                description: 'Title to subscribe to for Noona chapter updates.',
                 type: ApplicationCommandOptionType.String,
                 required: true,
             },
@@ -379,9 +379,9 @@ export const createSubscribeCommand = ({
 
         const matchSuffix = libraryMatch
             ? ''
-            : '\nNo exact Raven library match was found, so this subscription will use title text matching.';
+            : '\nNo exact Noona library match was found, so this subscription will use title text matching.';
         await interaction.editReply?.({
-            content: `Subscribed to **${normalizedTitle}**. I will DM you each time Raven downloads a new chapter.${matchSuffix}`,
+            content: `Subscribed to **${normalizedTitle}**. I'll DM you each time Noona finishes a new chapter.${matchSuffix}`,
             components: [],
         });
     },

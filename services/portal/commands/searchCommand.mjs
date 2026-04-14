@@ -5,7 +5,7 @@
  * - clients/komfClient.mjs
  * - tests/discordCommands.test.mjs
  * - commands/utils.mjs
- * Times this file has been edited: 3
+ * Times this file has been edited: 6
  */
 
 import {ApplicationCommandOptionType, MessageFlags} from 'discord.js';
@@ -73,11 +73,11 @@ export const createSearchCommand = ({
                                     } = {}) => ({
     definition: {
         name: 'search',
-        description: 'Search Kavita for matching series titles.',
+        description: 'Search Noona for matching series titles.',
         options: [
             {
                 name: 'title',
-                description: 'Series title to search for in Kavita.',
+                description: 'Series title to search for in Noona.',
                 type: ApplicationCommandOptionType.String,
                 required: true,
             },
@@ -108,7 +108,7 @@ export const createSearchCommand = ({
         const seriesMatches = Array.isArray(results?.series) ? results.series.filter(Boolean) : [];
         if (!seriesMatches.length) {
             await interaction.editReply?.({
-                content: `No Kavita titles found for "${title}".`,
+                content: `No Noona titles found for "${title}".`,
             });
             return;
         }
@@ -118,7 +118,7 @@ export const createSearchCommand = ({
             .map((series, index) => `${index + 1}. ${buildSeriesLabel(series)}`);
 
         const content = [
-            `Found ${seriesMatches.length} Kavita title ${seriesMatches.length === 1 ? 'match' : 'matches'} for "${title}":`,
+            `Found ${seriesMatches.length} Noona title ${seriesMatches.length === 1 ? 'match' : 'matches'} for "${title}":`,
             ...visibleMatches,
             seriesMatches.length > MAX_VISIBLE_RESULTS ? `Showing first ${MAX_VISIBLE_RESULTS} results.` : null,
         ]

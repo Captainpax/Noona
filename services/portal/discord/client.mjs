@@ -78,6 +78,7 @@ export const createDiscordClient = ({
                                         messageQueueNamespace = DEFAULT_MESSAGE_QUEUE_NAMESPACE,
                                         messageQueueTtlSeconds = DEFAULT_MESSAGE_QUEUE_TTL_SECONDS,
                                         directMessageHandler = null,
+                                        guildMemberAddHandler = null,
                                     } = {}) => {
     if (!token) {
         throw new Error('Discord token is required to initialise the Portal Discord client.');
@@ -147,6 +148,15 @@ export const createDiscordClient = ({
                 });
         });
     }
+    if (typeof guildMemberAddHandler === 'function') {
+        client.on(Events.GuildMemberAdd, member => {
+            Promise.resolve()
+                .then(() => guildMemberAddHandler(member))
+                .catch(error => {
+                    errMSG(`[Portal/Discord] Guild member join handler failed: ${error?.message ?? error}`);
+                });
+        });
+    }
 
     const registerCommands = async () => {
         if (!clientId) {
@@ -187,6 +197,20 @@ export const createDiscordClient = ({
     const fetchMember = async memberId => {
         const guild = await fetchGuild();
         return guild.members.fetch(memberId);
+    };
+
+    const fetchChannel = async channelId => {
+        const normalizedChannelId = normalizeString(channelId);
+        if (!normalizedChannelId) {
+            throw new Error('Discord channel id is required.');
+        }
+
+        await ready;
+        if (typeof client.channels?.fetch !== 'function') {
+            throw new Error('Discord channel client is not available.');
+        }
+
+        return client.channels.fetch(normalizedChannelId);
     };
 
     const assignDefaultRole = async memberId => {
@@ -235,6 +259,19 @@ export const createDiscordClient = ({
             errMSG(`[Portal/Discord] Failed to send direct message to ${normalizedUserId}: ${error.message}`);
             throw error;
         }
+    };
+
+    const sendChannelMessage = async (channelId, payload) => {
+        const channel = await fetchChannel(channelId);
+        const contentPayload = typeof payload === 'string' ? {content: payload} : payload;
+        if (!contentPayload || typeof contentPayload !== 'object') {
+            throw new Error('Channel message payload must be a string or object.');
+        }
+        if (!channel || typeof channel.send !== 'function') {
+            throw new Error('Discord channel could not receive messages.');
+        }
+
+        return channel.send(contentPayload);
     };
 
     const withQueueMutation = async (userId, task) => {
@@ -453,8 +490,10 @@ export const createDiscordClient = ({
         destroy,
         fetchGuild,
         fetchMember,
+        fetchChannel,
         assignDefaultRole,
         sendDirectMessage,
+        sendChannelMessage,
         waitUntilReady: () => ready,
     };
 };

@@ -2,74 +2,77 @@
   <app-splash-container>
     <ng-container title><h2>{{ t('title') }}</h2></ng-container>
     <ng-container body>
-      <p>{{ t('description') }}</p>
-      <form [formGroup]="registerForm" (ngSubmit)="submit()">
-        <div class="mb-3 text-start">
-          <label for="username" class="form-label">{{ t('username-label') }}</label>
-          <input id="username" class="form-control custom-input" formControlName="username" type="text"
-                 autocomplete="username"
-                 [class.is-invalid]="registerForm.get('username')?.invalid && registerForm.get('username')?.touched"
-                 aria-describedby="username-validations">
-          @if (registerForm.dirty || registerForm.touched) {
-            <div id="username-validations" class="invalid-feedback">
-              @if (registerForm.get('username')?.errors?.required) {
-                <div>{{ t('required-field') }}</div>
-              }
-            </div>
-          }
-        </div>
+      @if (!isLoaded()) {
+        <p>Checking managed Kavita setup...</p>
+      } @else if (allowRegister()) {
+        <p>{{ t('description') }}</p>
+        <form (ngSubmit)="submit()" [formGroup]="registerForm">
+          <div class="mb-3 text-start">
+            <label class="form-label" for="username">{{ t('username-label') }}</label>
+            <input [class.is-invalid]="registerForm.get('username')?.invalid && registerForm.get('username')?.touched" aria-describedby="username-validations" autocomplete="username" class="form-control custom-input"
+                   formControlName="username"
+                   id="username"
+                   type="text">
+            @if (registerForm.dirty || registerForm.touched) {
+              <div class="invalid-feedback" id="username-validations">
+                @if (registerForm.get('username')?.errors?.required) {
+                  <div>{{ t('required-field') }}</div>
+                }
+              </div>
+            }
+          </div>
 
-        <div class="mb-3 text-start">
-          <label for="email" class="form-label float-start">{{ t('email-label') }}</label>
-          <i class="fa fa-info-circle ms-1" placement="right" [ngbTooltip]="emailTooltip" role="button"
-             tabindex="0"></i>
-          <ng-template #emailTooltip>{{ t('email-tooltip') }}</ng-template>
-          <span class="visually-hidden" id="email-help">
-            <ng-container [ngTemplateOutlet]="emailTooltip"/>
-          </span>
-          <input class="form-control custom-input" type="email" inputmode="email" id="email" autocomplete="email"
-                 formControlName="email" aria-describedby="email-help"
-                 [class.is-invalid]="registerForm.get('email')?.invalid && registerForm.get('email')?.touched">
-          @if (registerForm.dirty || registerForm.touched) {
-            <div id="email-validations" class="invalid-feedback">
-              @if (registerForm.get('email')?.errors?.required) {
-                <div>{{ t('required-field') }}</div>
-              } @else if (registerForm.get('email')?.errors?.email) {
-                <div>{{ t('valid-email') }}</div>
-              }
-            </div>
-          }
+          <div class="mb-3 text-start">
+            <label class="form-label float-start" for="email">{{ t('email-label') }}</label>
+            <i [ngbTooltip]="emailTooltip" class="fa fa-info-circle ms-1" placement="right" role="button"
+               tabindex="0"></i>
+            <ng-template #emailTooltip>{{ t('email-tooltip') }}</ng-template>
+            <span class="visually-hidden" id="email-help">
+              <ng-container [ngTemplateOutlet]="emailTooltip"/>
+            </span>
+            <input [class.is-invalid]="registerForm.get('email')?.invalid && registerForm.get('email')?.touched" aria-describedby="email-help" autocomplete="email" class="form-control custom-input" formControlName="email"
+                   id="email" inputmode="email"
+                   type="email">
+            @if (registerForm.dirty || registerForm.touched) {
+              <div class="invalid-feedback" id="email-validations">
+                @if (registerForm.get('email')?.errors?.required) {
+                  <div>{{ t('required-field') }}</div>
+                } @else if (registerForm.get('email')?.errors?.email) {
+                  <div>{{ t('valid-email') }}</div>
+                }
+              </div>
+            }
+          </div>
 
-        </div>
+          <div class="mb-3 text-start">
+            <label class="form-label" for="password">Password</label>
+            <i [ngbTooltip]="passwordTooltip" class="fa fa-info-circle ms-1" placement="right" role="button"
+               tabindex="0"></i>
+            <ng-template #passwordTooltip>
+              {{ t('password-validation') }}
+            </ng-template>
+            <span class="visually-hidden" id="password-help"><ng-container [ngTemplateOutlet]="passwordTooltip"/></span>
+            <input [class.is-invalid]="registerForm.get('password')?.invalid && registerForm.get('password')?.touched" aria-describedby="password-help" autocomplete="new-password" class="form-control custom-input" formControlName="password"
+                   id="password" maxlength="256"
+                   minlength="6" pattern="^.{6,256}$"
+                   type="password">
+            @if (registerForm.dirty || registerForm.touched) {
+              <div class="invalid-feedback" id="password-validations">
+                @if (registerForm.get('password')?.errors?.required) {
+                  <div>{{ t('required-field') }}</div>
+                }
+                @if (registerForm.get('password')?.errors?.minlength || registerForm.get('password')?.errors?.maxLength || registerForm.get('password')?.errors?.pattern) {
+                  <div>{{ t('password-validation') }}</div>
+                }
+              </div>
+            }
+          </div>
 
-        <div class="mb-3 text-start">
-          <label for="password" class="form-label">Password</label>
-          <i class="fa fa-info-circle ms-1" placement="right" [ngbTooltip]="passwordTooltip" role="button"
-             tabindex="0"></i>
-          <ng-template #passwordTooltip>
-            {{ t('password-validation') }}
-          </ng-template>
-          <span class="visually-hidden" id="password-help"><ng-container [ngTemplateOutlet]="passwordTooltip"/></span>
-          <input id="password" class="form-control custom-input" maxlength="256" minlength="6" pattern="^.{6,256}$"
-                 formControlName="password" autocomplete="new-password"
-                 type="password" aria-describedby="password-help"
-                 [class.is-invalid]="registerForm.get('password')?.invalid && registerForm.get('password')?.touched">
-          @if (registerForm.dirty || registerForm.touched) {
-            <div id="password-validations" class="invalid-feedback">
-              @if (registerForm.get('password')?.errors?.required) {
-                <div>{{ t('required-field') }}</div>
-              }
-              @if (registerForm.get('password')?.errors?.minlength || registerForm.get('password')?.errors?.maxLength || registerForm.get('password')?.errors?.pattern) {
-                <div>{{ t('password-validation') }}</div>
-              }
-            </div>
-          }
-        </div>
-
-        <div>
-          <button class="btn btn-primary" type="submit" [disabled]="!registerForm.valid">{{ t('register') }}</button>
-        </div>
-      </form>
+          <div>
+            <button [disabled]="!registerForm.valid" class="btn btn-primary" type="submit">{{ t('register') }}</button>
+          </div>
+        </form>
+      }
     </ng-container>
   </app-splash-container>
 

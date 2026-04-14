@@ -2,7 +2,7 @@
  * @fileoverview Covers subscription chapter notification matching, dedupe, and persistence.
  * Related files:
  * - discord/subscriptionNotifier.mjs
- * Times this file has been edited: 2
+ * Times this file has been edited: 3
  */
 
 import assert from 'node:assert/strict';
@@ -113,6 +113,8 @@ test('subscription notifier DMs subscribers for newly completed chapters and per
 
     assert.equal(messages.length, 2);
     assert.equal(messages[0].userId, 'discord-user-1');
+    assert.match(messages[0].payload.content, /Noona finished downloading a new chapter/i);
+    assert.match(messages[0].payload.content, /Source page: https:\/\/source\.example\/solo-leveling/i);
     assert.match(messages[0].payload.content, /Chapter 2/i);
     assert.match(messages[1].payload.content, /Chapter 3/i);
     assert.equal(subscriptions[0]?.notifications?.chapterDmCount, 3);

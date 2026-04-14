@@ -47,17 +47,24 @@ Grouped routes:
 Default Warden API clients:
 
 - `noona-sage`
+- `noona-moon`
+- `noona-vault`
 - `noona-portal`
+- `noona-raven`
+- `noona-kavita`
+- `noona-komf`
 
 ## Service Authorization Rules
 
 Current live server behavior in `startWardenServer.mjs`:
 
 - Sage can access all protected Warden routes.
+- Any managed service with a Warden token may read only its own `GET /api/services/:name/config` route.
 - Portal is intentionally limited to:
   `GET /api/services`,
   `GET /api/services/install/progress`,
-  and `GET /api/services/:name/logs`
+  `GET /api/services/:name/logs`,
+  plus `GET /api/services/noona-portal/config` for Portal's own startup restore
 
 This is easy to miss
 because [../../../services/warden/api/requestAuth.mjs](../../../services/warden/api/requestAuth.mjs)
@@ -91,9 +98,12 @@ Important details:
   and `MONGO_URI`
 - the public placeholder is `********`
 - the same placeholder is accepted on writes to mean "keep the current secret"
-- `GET /api/services/:name/config` stays redacted by default, but the authenticated `noona-sage` token may opt into the
-  raw `env` and `runtimeConfig.env` maps with `?includeSecrets=true` for trusted setup-summary reuse flows
-- keep that opt-in narrow; it is meant for Sage's managed Kavita summary sync, not for general secret browsing
+- `GET /api/services/:name/config` stays redacted by default
+- the authenticated `noona-sage` token may opt into raw `env` and `runtimeConfig.env` maps with
+  `?includeSecrets=true`
+- the matching managed service token may also use `?includeSecrets=true`, but only on its own service name
+- cross-service secret reads stay forbidden; this opt-in exists for trusted setup flows and service self-restore, not
+  for general secret browsing
 
 If you add new sensitive settings, make sure the redaction and placeholder-preserve paths still cover them.
 
@@ -104,6 +114,12 @@ The HTTP server enforces:
 - max request body size via `WARDEN_API_MAX_BODY_BYTES`
 - request timeout via `WARDEN_API_REQUEST_TIMEOUT_MS`
 - headers timeout via `WARDEN_API_HEADERS_TIMEOUT_MS`
+
+Important default:
+
+- `WARDEN_API_REQUEST_TIMEOUT_MS` now defaults to 10 minutes instead of 30 seconds so synchronous
+  `POST /api/services/:name/update` calls can survive Docker pulls plus optional restarts when Moon waits on the live
+  result.
 
 Oversized JSON payloads return `413` instead of being buffered indefinitely.
 

@@ -5,10 +5,14 @@
  * Vault microservice for handling secure MongoDB and Redis operations from other Noona services.
  */
 
-import dotenv from 'dotenv';
-import {debugMSG, isDebugEnabled, log, setDebug, warn} from '../../utilities/etc/logger.mjs';
-import {createVaultApp} from './app/createVaultApp.mjs';
-import {createVaultServer} from './app/createVaultServer.mjs';
+import {loadServiceRuntimeConfig} from '../../utilities/etc/wardenRuntimeBootstrap.mjs';
+
+await loadServiceRuntimeConfig();
+
+const dotenv = (await import('dotenv')).default;
+const {debugMSG, isDebugEnabled, log, setDebug, warn} = await import('../../utilities/etc/logger.mjs');
+const {createVaultApp} = await import('./app/createVaultApp.mjs');
+const {createVaultServer} = await import('./app/createVaultServer.mjs');
 
 dotenv.config();
 

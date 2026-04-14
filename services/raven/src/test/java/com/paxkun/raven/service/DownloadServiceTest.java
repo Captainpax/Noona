@@ -5,16 +5,16 @@
  * - src/main/java/com/paxkun/raven/service/download/QueueDownloadResult.java
  * - src/main/java/com/paxkun/raven/service/download/SearchTitle.java
  * - src/main/java/com/paxkun/raven/service/download/SourceFinder.java
- * Times this file has been edited: 21
+ * Times this file has been edited: 22
  */
 package com.paxkun.raven.service;
 
 import com.paxkun.raven.service.download.*;
 import com.paxkun.raven.service.library.NewChapter;
 import com.paxkun.raven.service.library.NewTitle;
+import com.paxkun.raven.service.settings.DownloadLimitsSettings;
 import com.paxkun.raven.service.settings.DownloadNamingSettings;
 import com.paxkun.raven.service.settings.DownloadVpnSettings;
-import com.paxkun.raven.service.settings.DownloadWorkerSettings;
 import com.paxkun.raven.service.settings.SettingsService;
 import com.paxkun.raven.service.vpn.VpnRuntimeStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,19 +29,24 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-import static org.mockito.Mockito.any;
 
 /**
  * Covers download service behavior.
@@ -68,9 +73,6 @@ class DownloadServiceTest {
 
     @Mock
     private VaultService vaultService;
-
-    @Mock
-    private RavenRuntimeProperties runtimeProperties;
 
     @Mock
     private VPNServices vpnServices;
@@ -102,15 +104,12 @@ class DownloadServiceTest {
                 ""
         );
         lenient().when(settingsService.getDownloadNamingSettings()).thenReturn(naming);
-        lenient().when(settingsService.getDownloadWorkerSettings(anyInt())).thenReturn(new DownloadWorkerSettings(
-                "downloads.workers",
-                List.of(),
-                List.of()
+        lenient().when(settingsService.getDownloadLimitsSettings()).thenReturn(new DownloadLimitsSettings(
+                "downloads.limits",
+                0
         ));
         lenient().when(settingsService.getDownloadVpnSettings()).thenReturn(vpnSettings);
         lenient().when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(vpnSettings);
-        lenient().when(runtimeProperties.isWorkerMode()).thenReturn(false);
-        lenient().when(runtimeProperties.useProcessWorkers()).thenReturn(false);
         lenient().when(vpnServices.getStatus()).thenReturn(new VpnRuntimeStatus(
                 false,
                 true,
@@ -125,73 +124,6 @@ class DownloadServiceTest {
                 null,
                 "idle"
         ));
-    }
-
-    @Test
-    void getActiveWorkersHandlesImmutablePersistedTaskLists() {
-        when(vaultService.findMany(eq("raven_download_tasks"), anyMap())).thenReturn(List.of());
-
-        assertThat(downloadService.getActiveWorkers()).isEmpty();
-    }
-
-    @Test
-    void requestPauseActiveDownloadsInProcessModeHandlesImmutableEmptyPersistedList() {
-        when(runtimeProperties.useProcessWorkers()).thenReturn(true);
-        when(vaultService.findMany(eq("raven_download_tasks"), anyMap())).thenReturn(List.of());
-
-        DownloadService.PauseRequestResult pauseResult = downloadService.requestPauseActiveDownloads();
-
-        assertThat(pauseResult.getAffectedTasks()).isZero();
-        assertThat(pauseResult.pausedImmediately()).isEmpty();
-        assertThat(pauseResult.pausingAfterCurrentChapter()).isEmpty();
-    }
-
-    @Test
-    void requestPauseActiveDownloadsInProcessModePausesPersistedTasksFromMutableSnapshot() {
-        when(runtimeProperties.useProcessWorkers()).thenReturn(true);
-
-        long now = System.currentTimeMillis();
-        List<Map<String, Object>> persistedDocs = new ArrayList<>(List.of(
-                new HashMap<>(Map.of(
-                        "taskId", "queued-task",
-                        "title", "Queued Title",
-                        "status", "queued",
-                        "queuedAt", now,
-                        "sourceUrl", "http://example.com/queued",
-                        "queuedChapterNumbers", List.of("1", "2")
-                )),
-                new HashMap<>(Map.of(
-                        "taskId", "downloading-task",
-                        "title", "Downloading Title",
-                        "status", "downloading",
-                        "queuedAt", now + 100,
-                        "sourceUrl", "http://example.com/downloading",
-                        "queuedChapterNumbers", List.of("5")
-                ))
-        ));
-        stubPersistedTaskStore(persistedDocs);
-
-        DownloadService.PauseRequestResult pauseResult = downloadService.requestPauseActiveDownloads();
-
-        assertThat(pauseResult.pausedImmediately()).containsExactly("Queued Title");
-        assertThat(pauseResult.pausingAfterCurrentChapter()).containsExactly("Downloading Title");
-
-        Map<String, Object> queuedDoc = persistedDocs.stream()
-                .filter(doc -> "queued-task".equals(doc.get("taskId")))
-                .findFirst()
-                .orElseThrow();
-        Map<String, Object> downloadingDoc = persistedDocs.stream()
-                .filter(doc -> "downloading-task".equals(doc.get("taskId")))
-                .findFirst()
-                .orElseThrow();
-
-        assertThat(queuedDoc.get("status")).isEqualTo("paused");
-        assertThat(queuedDoc.get("pauseRequested")).isEqualTo(true);
-        assertThat(String.valueOf(queuedDoc.get("message"))).contains("Pause requested before download started");
-        assertThat(downloadingDoc.get("status")).isEqualTo("downloading");
-        assertThat(downloadingDoc.get("pauseRequested")).isEqualTo(true);
-        assertThat(downloadingDoc.get("message"))
-                .isEqualTo("Pause requested. Raven will stop this task after the current chapter finishes.");
     }
 
     @Test
@@ -307,51 +239,6 @@ class DownloadServiceTest {
         assertThat(persistedDocs)
                 .extracting(doc -> doc.get("taskId"))
                 .doesNotContain("trk-stale-task");
-    }
-
-    @Test
-    void processRestorePrefersNewestRestorableTaskPerTitleBeforeWorkerLaunch() throws Exception {
-        when(runtimeProperties.useProcessWorkers()).thenReturn(true);
-
-        RavenWorkerLauncher workerLauncher = mock(RavenWorkerLauncher.class);
-        Process workerProcess = mock(Process.class);
-        when(workerProcess.pid()).thenReturn(43210L);
-        when(workerLauncher.launch(any())).thenReturn(workerProcess);
-        ReflectionTestUtils.setField(downloadService, "workerLauncher", workerLauncher);
-
-        List<Map<String, Object>> persistedDocs = new ArrayList<>(List.of(
-                new HashMap<>(Map.of(
-                        "taskId", "trk-old-task",
-                        "title", "Tomb Raider King",
-                        "status", "interrupted",
-                        "queuedAt", 100L,
-                        "lastUpdated", 100L,
-                        "sourceUrl", "http://example.com/tomb-raider-king",
-                        "queuedChapterNumbers", List.of("212", "213", "214")
-                )),
-                new HashMap<>(Map.of(
-                        "taskId", "trk-fresh-task",
-                        "title", "Tomb Raider King",
-                        "status", "queued",
-                        "queuedAt", 200L,
-                        "lastUpdated", 200L,
-                        "sourceUrl", "http://example.com/tomb-raider-king",
-                        "queuedChapterNumbers", List.of("1", "2", "3")
-                ))
-        ));
-        stubPersistedTaskStore(persistedDocs);
-
-        downloadService.restorePersistedDownloadsForProcessMode();
-        ReflectionTestUtils.invokeMethod(downloadService, "dispatchQueuedProcessWorkers");
-
-        ArgumentCaptor<RavenWorkerLauncher.WorkerLaunchRequest> requestCaptor =
-                ArgumentCaptor.forClass(RavenWorkerLauncher.WorkerLaunchRequest.class);
-        verify(workerLauncher).launch(requestCaptor.capture());
-        assertThat(requestCaptor.getValue().taskId()).isEqualTo("trk-fresh-task");
-        assertThat(persistedDocs)
-                .extracting(doc -> doc.get("taskId"))
-                .contains("trk-fresh-task")
-                .doesNotContain("trk-old-task");
     }
 
     @Test
@@ -877,6 +764,133 @@ class DownloadServiceTest {
     }
 
     @Test
+    void singleChapterRetriesSourceLookupUntilPagesResolve() throws Exception {
+        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
+        when(titleScraper.getChapters("http://example.com/solo"))
+                .thenReturn(List.of(Map.of("chapter_title", "Chapter 2", "href", "http://example.com/solo/2")));
+        when(sourceFinder.findSource("http://example.com/solo/2"))
+                .thenReturn(List.of(), List.of(), List.of("http://example.com/solo/page1.jpg"));
+
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setSourceUrl("http://example.com/solo");
+        title.setType("Manhwa");
+
+        boolean downloaded = downloadService.downloadSingleChapter(title, "2");
+
+        assertThat(downloaded).isTrue();
+        verify(sourceFinder, times(3)).findSource("http://example.com/solo/2");
+    }
+
+    @Test
+    void singleChapterRetriesIncompleteChapterDownloadsBeforeCreatingArchive() throws Exception {
+        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
+        when(titleScraper.getChapters("http://example.com/solo"))
+                .thenReturn(List.of(Map.of("chapter_title", "Chapter 2", "href", "http://example.com/solo/2")));
+        when(sourceFinder.findSource("http://example.com/solo/2"))
+                .thenReturn(List.of("http://example.com/solo/page1.jpg", "http://example.com/solo/page2.jpg"));
+        downloadService.setScriptedSaveCounts("2", 1, 2);
+
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setSourceUrl("http://example.com/solo");
+        title.setType("Manhwa");
+
+        boolean downloaded = downloadService.downloadSingleChapter(title, "2");
+
+        Path downloadedTitleFolder = downloadsRoot.resolve("downloaded").resolve("manhwa").resolve("Solo Leveling");
+        assertThat(downloaded).isTrue();
+        verify(sourceFinder, times(2)).findSource("http://example.com/solo/2");
+        try (var stream = Files.list(downloadedTitleFolder)) {
+            assertThat(stream.toList())
+                    .hasSize(1)
+                    .allSatisfy(path -> assertThat(path.getFileName().toString()).endsWith(".cbz"));
+        }
+    }
+
+    @Test
+    void singleChapterDoesNotCreateArchiveWhenRetriesExhaustAfterPartialPageSaves() throws Exception {
+        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
+        when(titleScraper.getChapters("http://example.com/solo"))
+                .thenReturn(List.of(Map.of("chapter_title", "Chapter 2", "href", "http://example.com/solo/2")));
+        when(sourceFinder.findSource("http://example.com/solo/2"))
+                .thenReturn(List.of("http://example.com/solo/page1.jpg", "http://example.com/solo/page2.jpg"));
+        downloadService.setScriptedSaveCounts("2", 1, 1, 1);
+
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setSourceUrl("http://example.com/solo");
+        title.setType("Manhwa");
+
+        boolean downloaded = downloadService.downloadSingleChapter(title, "2");
+
+        Path downloadedTitleFolder = downloadsRoot.resolve("downloaded").resolve("manhwa").resolve("Solo Leveling");
+        assertThat(downloaded).isFalse();
+        assertThat(Files.exists(downloadedTitleFolder)).isFalse();
+    }
+
+    @Test
+    void saveImagesToFolderRetriesTransientImageFailures() throws Exception {
+        downloadService.useRealSaveImages();
+        downloadService.setImageFailuresBeforeSuccess("http://example.com/solo/page1.jpg", 2);
+
+        NewTitle title = new NewTitle();
+        title.setTitleName("Solo Leveling");
+        title.setType("Manhwa");
+
+        Path folder = downloadsRoot.resolve("save-images-retry");
+        int saved = downloadService.saveImagesToFolder(
+                List.of("http://example.com/solo/page1.jpg"),
+                folder,
+                settingsService.getDownloadNamingSettings(),
+                title,
+                "1"
+        );
+
+        assertThat(saved).isEqualTo(1);
+        assertThat(downloadService.getImageConnectionAttemptCount("http://example.com/solo/page1.jpg")).isEqualTo(3);
+        try (var stream = Files.list(folder)) {
+            assertThat(stream.toList()).hasSize(1);
+        }
+    }
+
+    @Test
+    void queueDownloadAllChaptersInterruptsWhenChapterRetriesAreExhausted() throws InterruptedException {
+        Map<String, String> title = new HashMap<>();
+        title.put("title", "Solo Leveling");
+        title.put("href", "http://example.com/solo");
+
+        when(titleScraper.searchManga("solo"))
+                .thenReturn(new ArrayList<>(List.of(title)));
+        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
+        when(titleScraper.getChapters("http://example.com/solo"))
+                .thenReturn(List.of(Map.of("chapter_title", "Chapter 1", "href", "http://example.com/solo/1")));
+        when(sourceFinder.findSource("http://example.com/solo/1"))
+                .thenReturn(List.of("http://example.com/solo/page1.jpg", "http://example.com/solo/page2.jpg"));
+        downloadService.setScriptedSaveCounts("1", 1, 1, 1);
+
+        NewTitle resolvedTitle = new NewTitle();
+        resolvedTitle.setTitleName("Solo Leveling");
+        resolvedTitle.setUuid("solo-uuid");
+        resolvedTitle.setSourceUrl("http://example.com/solo");
+        resolvedTitle.setLastDownloaded("0");
+        when(libraryService.resolveOrCreateTitle("Solo Leveling", "http://example.com/solo"))
+                .thenReturn(resolvedTitle);
+
+        SearchTitle searchTitle = downloadService.searchTitle("solo");
+        downloadService.queueDownloadAllChapters(searchTitle.getSearchId(), 1);
+
+        waitForStatus("Solo Leveling", "interrupted");
+
+        DownloadProgress interrupted = downloadService.getDownloadStatuses().stream()
+                .filter(progress -> "Solo Leveling".equals(progress.getTitle()) && "interrupted".equals(progress.getStatus()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(interrupted.getMessage()).contains("exhausted retries").contains("1");
+        assertThat(interrupted.getCompletedChapterNumbers()).doesNotContain("1");
+    }
+
+    @Test
     void pauseRequestFinishesCurrentChapterThenPersistsTaskForLater() throws Exception {
         Map<String, String> title = new HashMap<>();
         title.put("title", "Solo Leveling");
@@ -991,6 +1005,61 @@ class DownloadServiceTest {
     }
 
     @Test
+    void queuedDownloadsBypassVpnConnectionWhenAllowedPerTask() throws Exception {
+        when(settingsService.getDownloadVpnSettingsFresh()).thenReturn(new DownloadVpnSettings(
+                "downloads.vpn",
+                "pia",
+                true,
+                true,
+                "us_california",
+                "pia-user",
+                "pia-secret"
+        ));
+        when(vpnServices.getStatus()).thenReturn(new VpnRuntimeStatus(
+                true,
+                true,
+                false,
+                false,
+                "pia",
+                "us_california",
+                30,
+                null,
+                null,
+                null,
+                null,
+                "idle"
+        ));
+
+        Map<String, String> title = new HashMap<>();
+        title.put("title", "Solo Leveling");
+        title.put("href", "http://example.com/solo");
+
+        when(titleScraper.searchManga("solo"))
+                .thenReturn(new ArrayList<>(List.of(title)));
+        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
+        when(titleScraper.getChapters("http://example.com/solo"))
+                .thenReturn(List.of(Map.of("chapter_title", "Chapter 1", "href", "http://example.com/solo/1")));
+        when(sourceFinder.findSource(anyString())).thenReturn(List.of("http://example.com/solo/page1.jpg"));
+        NewTitle resolvedTitle = new NewTitle();
+        resolvedTitle.setTitleName("Solo Leveling");
+        resolvedTitle.setUuid("uuid");
+        resolvedTitle.setSourceUrl("http://example.com/solo");
+        resolvedTitle.setLastDownloaded("0");
+        when(libraryService.resolveOrCreateTitle("Solo Leveling", "http://example.com/solo"))
+                .thenReturn(resolvedTitle);
+
+        SearchTitle searchTitle = downloadService.searchTitle("solo");
+        downloadService.queueDownloadAllChapters(searchTitle.getSearchId(), 1, true);
+
+        waitForStatus("Solo Leveling", "completed");
+        assertThat(downloadService.getDownloadStatuses())
+                .anySatisfy(progress -> {
+                    assertThat(progress.getTitle()).isEqualTo("Solo Leveling");
+                    assertThat(progress.isAllowDownloadWithoutVpn()).isTrue();
+                });
+    }
+
+    @Test
     void queuedDownloadsStopWaitingWhenFreshVpnSettingsDisableTheGate() throws Exception {
         AtomicBoolean onlyDownloadWhenVpnOn = new AtomicBoolean(true);
         when(settingsService.getDownloadVpnSettings()).thenReturn(new DownloadVpnSettings(
@@ -1101,17 +1170,15 @@ class DownloadServiceTest {
     }
 
     @Test
-    void workerModeSkipsExecutorAndRestoreBootstrapping() {
-        when(runtimeProperties.isWorkerMode()).thenReturn(true);
-
+    void initExecutorBootstrapsSingleThreadedQueue() {
         downloadService.initExecutor();
 
-        assertThat(ReflectionTestUtils.getField(downloadService, "executor")).isNull();
-        verify(vaultService, never()).findMany(anyString(), anyMap());
+        assertThat(ReflectionTestUtils.getField(downloadService, "executor")).isNotNull();
+        assertThat(downloadService.getConfiguredDownloadThreads()).isEqualTo(1);
     }
 
     @Test
-    void persistedSnapshotsIncludeWorkerMetadataAndPauseFlag() {
+    void persistedSnapshotsIncludePauseFlagAndVpnBypassWithoutWorkerMetadata() {
         DownloadProgress progress = new DownloadProgress("Solo Leveling");
         progress.ensureTaskId("task-1");
         progress.attachTaskContext(
@@ -1123,8 +1190,8 @@ class DownloadServiceTest {
                 "http://example.com/cover.jpg",
                 "Summary"
         );
-        progress.assignWorker(1, 6, 43210L, "process");
         progress.setPauseRequested(true);
+        progress.setAllowDownloadWithoutVpn(true);
 
         downloadService.updateTrackedTask(progress);
 
@@ -1135,73 +1202,20 @@ class DownloadServiceTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> document = (Map<String, Object>) updateCaptor.getValue().get("$set");
         assertThat(document)
-                .containsEntry("workerIndex", 1)
-                .containsEntry("cpuCoreId", 6)
-                .containsEntry("workerPid", 43210L)
-                .containsEntry("executionMode", "process")
-                .containsEntry("pauseRequested", true);
+                .containsEntry("coverUrl", "http://example.com/cover.jpg")
+                .containsEntry("pauseRequested", true)
+                .containsEntry("allowDownloadWithoutVpn", true)
+                .doesNotContainKeys("workerIndex", "cpuCoreId", "workerPid", "executionMode");
     }
 
     @Test
-    void workerModeHonorsPauseRequestBeforeStartingDownload() {
-        when(runtimeProperties.isWorkerMode()).thenReturn(true);
+    void overallSpeedLimitUsesDownloadLimitsSettings() {
+        when(settingsService.getDownloadLimitsSettings()).thenReturn(new DownloadLimitsSettings(
+                "downloads.limits",
+                2048
+        ));
 
-        AtomicBoolean pauseRequested = new AtomicBoolean(true);
-        mockPersistedWorkerTaskReads("task-1", pauseRequested, "http://example.com/solo");
-
-        downloadService.runPersistedTaskInWorker("task-1", 0, 4, "process");
-
-        verifyNoInteractions(libraryService);
-        assertThat(downloadService.getDownloadStatuses())
-                .anySatisfy(progress -> {
-                    assertThat(progress.getTaskId()).isEqualTo("task-1");
-                    assertThat(progress.getStatus()).isEqualTo("paused");
-                    assertThat(progress.isPauseRequested()).isTrue();
-                    assertThat(progress.getCpuCoreId()).isEqualTo(4);
-                });
-    }
-
-    @Test
-    void workerModePausesAtChapterBoundaryWhenPauseFlagAppears() {
-        when(runtimeProperties.isWorkerMode()).thenReturn(true);
-        when(loggerService.getDownloadsRoot()).thenReturn(downloadsRoot);
-        when(titleScraper.getChapters("http://example.com/solo"))
-                .thenReturn(List.of(
-                        Map.of("chapter_title", "Chapter 1", "href", "http://example.com/solo/1"),
-                        Map.of("chapter_title", "Chapter 2", "href", "http://example.com/solo/2")
-                ));
-        when(sourceFinder.findSource(anyString())).thenReturn(List.of("http://example.com/solo/page1.jpg"));
-
-        NewTitle resolvedTitle = new NewTitle();
-        resolvedTitle.setTitleName("Solo Leveling");
-        resolvedTitle.setUuid("uuid");
-        resolvedTitle.setSourceUrl("http://example.com/solo");
-        resolvedTitle.setLastDownloaded("0");
-        when(libraryService.resolveOrCreateTitle("Solo Leveling", "http://example.com/solo"))
-                .thenReturn(resolvedTitle);
-
-        AtomicBoolean pauseRequested = new AtomicBoolean(false);
-        mockPersistedWorkerTaskReads("task-1", pauseRequested, "http://example.com/solo");
-        AtomicBoolean firstChapter = new AtomicBoolean(false);
-        downloadService.setBeforeSaveImagesHook(() -> {
-            if (firstChapter.compareAndSet(false, true)) {
-                pauseRequested.set(true);
-            }
-        });
-
-        downloadService.runPersistedTaskInWorker("task-1", 1, 7, "process");
-
-        assertThat(downloadService.getDownloadStatuses())
-                .anySatisfy(progress -> {
-                    assertThat(progress.getTaskId()).isEqualTo("task-1");
-                    assertThat(progress.getStatus()).isEqualTo("paused");
-                    assertThat(progress.getCompletedChapterNumbers()).contains("1");
-                    assertThat(progress.getRemainingChapterNumbers()).contains("2");
-                    assertThat(progress.isPauseRequested()).isTrue();
-                    assertThat(progress.getWorkerIndex()).isEqualTo(1);
-                    assertThat(progress.getCpuCoreId()).isEqualTo(7);
-                    assertThat(progress.getExecutionMode()).isEqualTo("process");
-                });
+        assertThat(downloadService.getOverallSpeedLimitKbps()).isEqualTo(2048);
     }
 
     @Test
@@ -1356,30 +1370,6 @@ class DownloadServiceTest {
         }));
     }
 
-    private void mockPersistedWorkerTaskReads(String taskId, AtomicBoolean pauseRequested, String sourceUrl) {
-        lenient().when(vaultService.findOne("raven_download_tasks", Map.of("taskId", taskId)))
-                .thenAnswer(invocation -> Map.of("taskId", taskId, "pauseRequested", pauseRequested.get()));
-        lenient().when(vaultService.parseJson(any(Map.class), eq(DownloadProgress.class)))
-                .thenAnswer(invocation -> {
-                    DownloadProgress progress = new DownloadProgress("Solo Leveling");
-                    progress.ensureTaskId(taskId);
-                    progress.attachTaskContext(
-                            taskId,
-                            "library-download",
-                            "uuid",
-                            sourceUrl,
-                            "manhwa",
-                            "http://example.com/cover.jpg",
-                            "Summary"
-                    );
-                    progress.applyChapterPlan(List.of("1", "2"), List.of("1", "2"), List.of(), "2", 2, "Queued in Raven.");
-                    if (pauseRequested.get()) {
-                        progress.setPauseRequested(true);
-                    }
-                    return progress;
-                });
-    }
-
     private void stubPersistedTaskStore(List<Map<String, Object>> docs) {
         lenient().when(vaultService.findMany(eq("raven_download_tasks"), anyMap()))
                 .thenAnswer(invocation -> filterPersistedTaskDocs(docs, invocation.getArgument(1)));
@@ -1486,6 +1476,7 @@ class DownloadServiceTest {
         ReflectionTestUtils.setField(progress, "totalChapters", ((Number) doc.getOrDefault("totalChapters", 0)).intValue());
         ReflectionTestUtils.setField(progress, "completedChapters", ((Number) doc.getOrDefault("completedChapters", 0)).intValue());
         ReflectionTestUtils.setField(progress, "pauseRequested", Boolean.TRUE.equals(doc.get("pauseRequested")));
+        ReflectionTestUtils.setField(progress, "allowDownloadWithoutVpn", Boolean.TRUE.equals(doc.get("allowDownloadWithoutVpn")));
         ReflectionTestUtils.setField(progress, "message", doc.getOrDefault("message", "Queued in Raven."));
         ReflectionTestUtils.setField(progress, "queuedChapterNumbers", toStringList(doc.get("queuedChapterNumbers")));
         ReflectionTestUtils.setField(progress, "completedChapterNumbers", toStringList(doc.get("completedChapterNumbers")));
@@ -1507,7 +1498,7 @@ class DownloadServiceTest {
     }
 
     private void waitForStatus(String titleName, String expectedStatus) throws InterruptedException {
-        for (int attempt = 0; attempt < 50; attempt++) {
+        for (int attempt = 0; attempt < 200; attempt++) {
             List<DownloadProgress> statuses = downloadService.getDownloadStatuses();
             boolean match = statuses.stream()
                     .anyMatch(progress -> titleName.equals(progress.getTitle())
@@ -1521,7 +1512,7 @@ class DownloadServiceTest {
     }
 
     private void waitForMessage(String titleName, String expectedMessage) throws InterruptedException {
-        for (int attempt = 0; attempt < 50; attempt++) {
+        for (int attempt = 0; attempt < 200; attempt++) {
             List<DownloadProgress> statuses = downloadService.getDownloadStatuses();
             boolean match = statuses.stream()
                     .anyMatch(progress -> titleName.equals(progress.getTitle())
@@ -1538,6 +1529,10 @@ class DownloadServiceTest {
         private Runnable beforeSaveImagesHook = () -> {
         };
         private int perImageDelayMs;
+        private final Map<String, Deque<Integer>> scriptedSaveCounts = new ConcurrentHashMap<>();
+        private final Map<String, Integer> imageFailuresBeforeSuccess = new ConcurrentHashMap<>();
+        private final Map<String, AtomicInteger> imageConnectionAttempts = new ConcurrentHashMap<>();
+        private boolean useRealSaveImages;
 
         void setBeforeSaveImagesHook(Runnable beforeSaveImagesHook) {
             this.beforeSaveImagesHook = beforeSaveImagesHook == null ? () -> {
@@ -1546,6 +1541,23 @@ class DownloadServiceTest {
 
         void setPerImageDelayMs(int perImageDelayMs) {
             this.perImageDelayMs = Math.max(0, perImageDelayMs);
+        }
+
+        void setScriptedSaveCounts(String chapterNumber, Integer... counts) {
+            scriptedSaveCounts.put(chapterNumber, new ArrayDeque<>(Arrays.asList(counts)));
+        }
+
+        void useRealSaveImages() {
+            this.useRealSaveImages = true;
+        }
+
+        void setImageFailuresBeforeSuccess(String url, int failuresBeforeSuccess) {
+            imageFailuresBeforeSuccess.put(url, Math.max(0, failuresBeforeSuccess));
+        }
+
+        int getImageConnectionAttemptCount(String url) {
+            AtomicInteger attempts = imageConnectionAttempts.get(url);
+            return attempts == null ? 0 : attempts.get();
         }
 
         @Override
@@ -1558,11 +1570,42 @@ class DownloadServiceTest {
                     Thread.currentThread().interrupt();
                 }
             }
+            Deque<Integer> scriptedCounts = scriptedSaveCounts.get(chapterNumber);
+            if (scriptedCounts != null && !scriptedCounts.isEmpty()) {
+                try {
+                    Files.createDirectories(folder);
+                } catch (IOException ignored) {
+                }
+                return scriptedCounts.removeFirst();
+            }
+            if (useRealSaveImages) {
+                return super.saveImagesToFolder(urls, folder, naming, titleRecord, chapterNumber);
+            }
             try {
                 Files.createDirectories(folder);
             } catch (IOException ignored) {
             }
             return urls.size();
+        }
+
+        @Override
+        protected HttpURLConnection openImageConnection(String url) throws IOException {
+            if (!useRealSaveImages) {
+                return super.openImageConnection(url);
+            }
+
+            int attempt = imageConnectionAttempts
+                    .computeIfAbsent(url, ignored -> new AtomicInteger())
+                    .incrementAndGet();
+            int failuresBeforeSuccess = imageFailuresBeforeSuccess.getOrDefault(url, 0);
+            if (attempt <= failuresBeforeSuccess) {
+                throw new IOException("Synthetic image failure for attempt " + attempt);
+            }
+
+            return new StubHttpURLConnection(
+                    new URL(url),
+                    new ByteArrayInputStream(("image-" + attempt).getBytes(StandardCharsets.UTF_8))
+            );
         }
 
         @Override
@@ -1589,6 +1632,38 @@ class DownloadServiceTest {
                 });
             } catch (IOException ignored) {
             }
+        }
+    }
+
+    static final class StubHttpURLConnection extends HttpURLConnection {
+        private final ByteArrayInputStream inputStream;
+
+        StubHttpURLConnection(URL url, ByteArrayInputStream inputStream) {
+            super(url);
+            this.inputStream = inputStream;
+        }
+
+        @Override
+        public void disconnect() {
+        }
+
+        @Override
+        public boolean usingProxy() {
+            return false;
+        }
+
+        @Override
+        public void connect() {
+        }
+
+        @Override
+        public int getResponseCode() {
+            return HTTP_OK;
+        }
+
+        @Override
+        public ByteArrayInputStream getInputStream() {
+            return inputStream;
         }
     }
 }

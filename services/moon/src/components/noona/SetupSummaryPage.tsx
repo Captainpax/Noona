@@ -110,7 +110,7 @@ export function SetupSummaryPage() {
     const visibleServices = useMemo(() => [...services]
         .filter((entry) => {
             const name = normalizeString(entry?.name).trim();
-            return Boolean(name) && (entry?.installed === true || selectedSet.has(name));
+            return Boolean(name) && (entry?.installed === true || entry?.required === true || selectedSet.has(name));
         })
         .sort((left, right) => {
             const leftName = normalizeString(left?.name).trim();
@@ -274,6 +274,8 @@ export function SetupSummaryPage() {
                         <Text onBackground="neutral-weak" variant="body-default-s">
                             This page reads the persisted setup profile and live service status. Confirm what is
                             running, open the apps you need, then complete the Discord login flow and finalize setup.
+                            Core services like Mongo, Redis, Vault, Sage, and Moon are included automatically behind
+                            the saved app selection.
                         </Text>
                     </Column>
 
@@ -323,8 +325,8 @@ export function SetupSummaryPage() {
                                 <Column gap="12">
                                     <Heading as="h2" variant="heading-strong-l">What is running</Heading>
                                     {visibleServices.length === 0 &&
-                                        <Text onBackground="neutral-weak" variant="body-default-xs">No setup services
-                                            are visible yet.</Text>}
+                                        <Text onBackground="neutral-weak" variant="body-default-xs">No services from
+                                            the saved setup profile are visible yet.</Text>}
                                     {visibleServices.map((entry) => {
                                         const name = normalizeString(entry?.name).trim();
                                         const title = TITLES[name] || name || "Service";

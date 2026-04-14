@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/LibraryService.java
  * - src/main/java/com/paxkun/raven/service/LoggerService.java
  * - src/main/java/com/paxkun/raven/service/download/DownloadProgress.java
- * Times this file has been edited: 8
+ * Times this file has been edited: 9
  */
 package com.paxkun.raven.controller;
 
@@ -157,7 +157,7 @@ class DownloadControllerTest {
 
     @Test
     void postQueueEndpointReturnsAcceptedForQueuedResults() throws Exception {
-        when(downloadService.queueDownloadAllChaptersResult("search-123", 2))
+        when(downloadService.queueDownloadAllChaptersResult("search-123", 2, false))
                 .thenReturn(new QueueDownloadResult(
                         QueueDownloadResult.STATUS_QUEUED,
                         "Download queued for: Solo Leveling",
@@ -175,8 +175,26 @@ class DownloadControllerTest {
     }
 
     @Test
+    void postQueueEndpointForwardsAllowDownloadWithoutVpn() throws Exception {
+        when(downloadService.queueDownloadAllChaptersResult("search-123", 2, true))
+                .thenReturn(new QueueDownloadResult(
+                        QueueDownloadResult.STATUS_QUEUED,
+                        "Download queued for: Solo Leveling",
+                        1,
+                        List.of("Solo Leveling"),
+                        List.of()
+                ));
+
+        mockMvc.perform(post("/v1/download/select")
+                        .contentType("application/json")
+                        .content("{\"searchId\":\"search-123\",\"optionIndex\":2,\"allowDownloadWithoutVpn\":true}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value(QueueDownloadResult.STATUS_QUEUED));
+    }
+
+    @Test
     void postQueueEndpointReturnsGoneForExpiredSessions() throws Exception {
-        when(downloadService.queueDownloadAllChaptersResult("search-123", 2))
+        when(downloadService.queueDownloadAllChaptersResult("search-123", 2, false))
                 .thenReturn(new QueueDownloadResult(
                         QueueDownloadResult.STATUS_SEARCH_EXPIRED,
                         "Search session expired or not found. Please search again.",
@@ -194,7 +212,7 @@ class DownloadControllerTest {
 
     @Test
     void postQueueEndpointReturnsConflictForAlreadyActiveTitles() throws Exception {
-        when(downloadService.queueDownloadAllChaptersResult("search-123", 2))
+        when(downloadService.queueDownloadAllChaptersResult("search-123", 2, false))
                 .thenReturn(new QueueDownloadResult(
                         QueueDownloadResult.STATUS_ALREADY_ACTIVE,
                         "Download already in progress for: Solo Leveling",
@@ -213,7 +231,7 @@ class DownloadControllerTest {
 
     @Test
     void postQueueEndpointReturnsBadRequestForInvalidSelection() throws Exception {
-        when(downloadService.queueDownloadAllChaptersResult("search-123", 99))
+        when(downloadService.queueDownloadAllChaptersResult("search-123", 99, false))
                 .thenReturn(new QueueDownloadResult(
                         QueueDownloadResult.STATUS_INVALID_SELECTION,
                         "Invalid selection. Please choose a valid option.",
@@ -296,26 +314,25 @@ class DownloadControllerTest {
                 "connecting"
         ));
         DownloadProgress progress = new DownloadProgress("Solo Leveling");
+        progress.setAllowDownloadWithoutVpn(true);
+        progress.attachTaskContext(
+                "task-1",
+                "library-download",
+                "uuid-1",
+                "http://example.com/solo",
+                "manhwa",
+                "http://example.com/cover.jpg",
+                "Summary"
+        );
         progress.markStarted(22);
         progress.chapterStarted("Chapter 21");
         progress.chapterCompleted();
-        progress.assignWorker(1, 6, 3210L, "process");
         progress.setPauseRequested(true);
 
         when(downloadService.getPrimaryActiveDownloadStatus()).thenReturn(progress);
         when(downloadService.getActiveDownloadCount()).thenReturn(1);
-        when(downloadService.getConfiguredDownloadThreads()).thenReturn(3);
-        when(downloadService.getThreadRateLimitsKbps()).thenReturn(List.of(0, 256, 0));
-        when(downloadService.getWorkerExecutionMode()).thenReturn("process");
-        when(downloadService.getWorkerCpuCoreIds()).thenReturn(List.of(4, 6, -1));
-        when(downloadService.getAvailableCpuIds()).thenReturn(List.of(4, 5, 6, 7));
-        when(downloadService.getActiveWorkers()).thenReturn(List.of(java.util.Map.of(
-                "taskId", "task-1",
-                "workerIndex", 1,
-                "cpuCoreId", 6,
-                "workerPid", 3210L,
-                "executionMode", "process"
-        )));
+        when(downloadService.getConfiguredDownloadThreads()).thenReturn(1);
+        when(downloadService.getOverallSpeedLimitKbps()).thenReturn(256);
         when(libraryService.getCurrentCheckActivity()).thenReturn(null);
 
         mockMvc.perform(get("/v1/download/status/summary"))
@@ -323,16 +340,13 @@ class DownloadControllerTest {
                 .andExpect(jsonPath("$.state").value("downloading"))
                 .andExpect(jsonPath("$.statusText").value("Downloading Solo Leveling"))
                 .andExpect(jsonPath("$.activeDownloads").value(1))
-                .andExpect(jsonPath("$.threadRateLimitsKbps[1]").value(256))
-                .andExpect(jsonPath("$.workerExecutionMode").value("process"))
-                .andExpect(jsonPath("$.workerCpuCoreIds[1]").value(6))
-                .andExpect(jsonPath("$.availableCpuIds[0]").value(4))
-                .andExpect(jsonPath("$.activeWorkers[0].workerPid").value(3210))
+                .andExpect(jsonPath("$.overallSpeedLimitKbps").value(256))
                 .andExpect(jsonPath("$.vpn.enabled").value(true))
                 .andExpect(jsonPath("$.vpn.connectionState").value("connecting"))
                 .andExpect(jsonPath("$.currentDownload.title").value("Solo Leveling"))
+                .andExpect(jsonPath("$.currentDownload.coverUrl").value("http://example.com/cover.jpg"))
                 .andExpect(jsonPath("$.currentDownload.currentChapter").value("Chapter 21"))
-                .andExpect(jsonPath("$.currentDownload.workerIndex").value(1))
+                .andExpect(jsonPath("$.currentDownload.allowDownloadWithoutVpn").value(true))
                 .andExpect(jsonPath("$.currentDownload.pauseRequested").value(true));
     }
 
@@ -354,12 +368,8 @@ class DownloadControllerTest {
         ));
         when(downloadService.getPrimaryActiveDownloadStatus()).thenReturn(null);
         when(downloadService.getActiveDownloadCount()).thenReturn(0);
-        when(downloadService.getConfiguredDownloadThreads()).thenReturn(2);
-        when(downloadService.getThreadRateLimitsKbps()).thenReturn(List.of(0, 0));
-        when(downloadService.getWorkerExecutionMode()).thenReturn("thread");
-        when(downloadService.getWorkerCpuCoreIds()).thenReturn(List.of(-1, -1));
-        when(downloadService.getAvailableCpuIds()).thenReturn(List.of());
-        when(downloadService.getActiveWorkers()).thenReturn(List.of());
+        when(downloadService.getConfiguredDownloadThreads()).thenReturn(1);
+        when(downloadService.getOverallSpeedLimitKbps()).thenReturn(0);
         when(libraryService.getCurrentCheckActivity())
                 .thenReturn(new LibraryService.CheckActivity("library", "Omniscient Reader", 2, 14, 123L));
 

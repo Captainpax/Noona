@@ -181,11 +181,6 @@
   opacity: 0.7;
 }
 
-.downloadsCarousel {
-  width: 100%;
-}
-
-.carouselSlideCard,
 .emptyStateCard {
   background: linear-gradient(
     160deg,
@@ -195,64 +190,92 @@
   );
 }
 
-.carouselSlideCard {
-  min-height: 100%;
+.toolbarStack {
+  gap: 0.75rem;
 }
 
-.downloadsList {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.listLimitControl {
+.toolbarLabel {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.4rem 0.55rem 0.4rem 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--brand-background-strong) 12%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-background) 94%, transparent);
+  min-width: 3.75rem;
 }
 
-.listLimitLabel {
-  color: var(--neutral-on-background-weak);
+.vpnOverrideField {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  width: fit-content;
+}
+
+.vpnOverrideText {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.vpnOverrideHint {
+  max-width: 28rem;
+}
+
+.tableScroller {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--brand-background-strong) 14%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--surface-background) 96%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.downloadsTable {
+  width: 100%;
+  min-width: 72rem;
+  border-collapse: collapse;
+}
+
+.tableHeaderCell {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.95rem 1rem;
+  text-align: left;
   font-size: 0.78rem;
   letter-spacing: 0.02em;
+  color: var(--neutral-on-background-weak);
+  background: color-mix(in srgb, var(--surface-background) 94%, var(--brand-background-strong) 6%);
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-background-strong) 14%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
 }
 
-.listLimitSelect {
-  min-width: 4.5rem;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--neutral-on-background-strong);
-  font: inherit;
-  cursor: pointer;
+.tableRow {
+  transition: background-color 160ms ease;
 }
 
-.downloadRow {
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-  background: linear-gradient(
-    160deg,
-    color-mix(in srgb, var(--brand-background-strong) 6%, var(--surface-background)) 0%,
-    color-mix(in srgb, var(--surface-background) 98%, transparent) 100%
-  );
+.tableRow:hover {
+  background: color-mix(in srgb, var(--brand-background-strong) 6%, transparent);
 }
 
-.downloadRow:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--brand-background-strong) 24%, var(--neutral-border-medium, rgba(255, 255, 255, 0.12)));
-  box-shadow: 0 1rem 2rem color-mix(in srgb, var(--brand-background-strong) 8%, transparent);
+.tableCell {
+  padding: 1rem;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-background-strong) 10%, var(--neutral-border-medium, rgba(255, 255, 255, 0.08)));
+}
+
+.tableRow:last-child .tableCell {
+  border-bottom: 0;
+}
+
+.progressCell {
+  min-width: 11rem;
+}
+
+.tableProgressBar {
+  gap: 0.4rem;
 }
 
 .detailsCard {
   width: min(24rem, calc(100vw - 2rem));
   box-shadow: 0 1.2rem 2.4rem color-mix(in srgb, var(--brand-background-strong) 10%, transparent);
-}
-
-.progressBarLarge,
-.progressBarCompact {
-  gap: 0.5rem;
 }
 
 @media (max-width: 720px) {
@@ -277,16 +300,22 @@
     width: min(20rem, calc(100vw - 1.5rem));
   }
 
-  .listLimitControl {
+  .toolbarLabel {
+    min-width: 100%;
+  }
+
+  .vpnOverrideField {
     width: 100%;
-    justify-content: space-between;
+  }
+
+  .vpnOverrideHint {
+    max-width: none;
   }
 }
 
 @media (max-width: 980px) {
-  .downloadRow:hover {
-    transform: none;
-    box-shadow: none;
+  .tableRow:hover {
+    background: transparent;
   }
 }
 

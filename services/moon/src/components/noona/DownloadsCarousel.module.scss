@@ -1,0 +1,44 @@
+.carousel {
+  width: 100%;
+  min-width: 0;
+}
+
+.railViewport {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.railGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.railSlot {
+  min-width: 0;
+}
+
+.railProgressBar {
+  gap: 0.35rem;
+}
+
+@media (max-width: 1119px) {
+  .railGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 719px) {
+  .railGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .railGrid {
+    transition: none;
+  }
+}

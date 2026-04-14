@@ -78,18 +78,6 @@ class VPNServicesTest {
     }
 
     @Test
-    void workerModeSkipsVpnSchedulerStartup() {
-        TestableVPNServices vpnServices = spy(new TestableVPNServices(settingsService, downloadService, loggerService));
-        RavenRuntimeProperties runtimeProperties = new RavenRuntimeProperties();
-        runtimeProperties.setWorkerMode(true);
-        ReflectionTestUtils.setField(vpnServices, "runtimeProperties", runtimeProperties);
-
-        vpnServices.start();
-
-        assertThat(vpnServices.scheduleCount).isZero();
-    }
-
-    @Test
     void captureLocalRouteSpecsFiltersOutDefaultVpnAndLoopbackRoutes() throws Exception {
         VPNServices vpnServices = spy(new VPNServices(settingsService, downloadService, loggerService));
         doReturn(List.of(

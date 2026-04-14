@@ -215,16 +215,7 @@ export function registerBootApi(context = {}) {
     };
 
     api.bootMinimal = async function bootMinimal() {
-        const moon = buildEffectiveServiceDescriptor('noona-moon').descriptor;
-        const sage = buildEffectiveServiceDescriptor('noona-sage').descriptor;
-        const moonHealthUrl = resolveBootHealthTarget(moon);
-
-        if (autoUpdatesEnabled()) {
-            await runStartupAutoUpdates(['noona-sage', 'noona-moon'], {restart: true});
-        }
-
-        await api.startService(sage, resolveBootHealthTarget(sage));
-        await api.startService(moon, moonHealthUrl);
+        await api.bootFull({services: Array.from(minimalServiceSet)});
     };
 
     const startServiceForBoot = async (name, options = {}) => {
@@ -473,23 +464,26 @@ export function registerBootApi(context = {}) {
                     explicit: false,
                 }))
                 : {mode: 'unspecified', selected: [], explicit: false};
-        const detectedServices = setupCompleted || SUPER_MODE
-            ? []
-            : await resolveInstalledLifecycleServices(dockerClient);
-        const shouldBootFull = SUPER_MODE || (!setupCompleted && shouldRestoreManagedLifecycle(detectedServices));
+        let detectedServices = [];
+        let shouldBootFull = SUPER_MODE || persistedSelectionState?.mode === 'selected';
+
+        if (!shouldBootFull && persistedSelectionState?.mode !== 'minimal') {
+            detectedServices = await resolveInstalledLifecycleServices(dockerClient);
+            shouldBootFull = shouldRestoreManagedLifecycle(detectedServices);
+        }
 
         if (shouldBootFull) {
             if (SUPER_MODE) {
                 logger.log('[Warden] 💥 DEBUG=super — launching full stack in superBootOrder...');
             } else {
-                logger.log('[Warden] Detected installed managed services — restoring configured stack.');
+                logger.log('[Warden] Restoring the saved managed lifecycle.');
             }
             const services = detectedServices.length > 0
                 ? detectedServices
                 : await resolveManagedLifecycleServices({dockerClient});
             await api.bootFull({services});
         } else {
-            logger.log('[Warden] 🧪 Minimal mode — launching sage and moon only');
+            logger.log('[Warden] 🧪 Core mode — launching mongo, redis, vault, sage, and moon');
             await api.bootMinimal();
         }
 

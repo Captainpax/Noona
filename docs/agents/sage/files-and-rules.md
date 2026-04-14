@@ -22,8 +22,8 @@
   Pending-admin bootstrap, Discord OAuth config and callback flow, session login/logout, default member permissions,
   and CRUD for auth users.
 - [../../../services/sage/routes/registerSettingsRoutes.mjs](../../../services/sage/routes/registerSettingsRoutes.mjs)
-  Debug, onboarding message, download naming, worker and VPN settings, service config and restart actions, ecosystem
-  lifecycle, factory reset, and Vault inspection or wipe helpers.
+  Debug, onboarding message plus channel id, download naming, download-limit and VPN settings, service config and
+  restart actions, ecosystem lifecycle, factory reset, and Vault inspection or wipe helpers.
 - [../../../services/sage/routes/registerRavenRoutes.mjs](../../../services/sage/routes/registerRavenRoutes.mjs)
   Browser-safe Raven library and download APIs plus recommendation and subscription flows backed by Vault and Portal.
 

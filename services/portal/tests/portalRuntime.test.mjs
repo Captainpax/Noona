@@ -216,3 +216,175 @@ test(
         }
     },
 );
+
+test(
+    'startPortal posts the saved onboarding message into the configured channel when a guild member joins',
+    {concurrency: false},
+    async () => {
+        const sentMessages = [];
+        let guildMemberAddHandler = null;
+
+        const runtime = await startPortal({
+            env: {
+                ...REQUIRED_ENV,
+                DISCORD_BOT_TOKEN: 'good-token',
+                DISCORD_CLIENT_ID: 'client-id',
+                DISCORD_GUILD_ID: 'guild-id',
+                MOON_BASE_URL: 'https://moon.example',
+                KAVITA_EXTERNAL_URL: 'https://kavita.example',
+            },
+            dependencies: {
+                createVaultClient: () => ({
+                    readSetting: async () => ({
+                        key: 'discord.onboarding_message',
+                        template: 'Welcome to {guild_name}, {user_mention}! Start with {moon_url}',
+                        channelId: 'channel-42',
+                    }),
+                }),
+                createOnboardingStore: () => ({
+                    consumeToken: async () => null,
+                    getToken: async () => null,
+                    setToken: async () => null,
+                }),
+                createPortalSlashCommands: () => [],
+                createDirectMessageHandler: () => async () => {
+                },
+                createDiscordClient: (options) => {
+                    guildMemberAddHandler = options.guildMemberAddHandler;
+                    return {
+                        login: async () => {
+                        },
+                        client: {},
+                        sendChannelMessage: async (channelId, payload) => {
+                            sentMessages.push({channelId, payload});
+                        },
+                        destroy: () => {
+                        },
+                    };
+                },
+                createDiscordPresenceUpdater: () => ({
+                    start: () => {
+                    },
+                    stop: () => {
+                    },
+                }),
+                createRecommendationNotifier: () => ({
+                    start: () => {
+                    },
+                    stop: () => {
+                    },
+                }),
+                createSubscriptionNotifier: () => ({
+                    start: () => {
+                    },
+                    stop: () => {
+                    },
+                }),
+            },
+        });
+
+        try {
+            assert.equal(typeof guildMemberAddHandler, 'function');
+
+            await guildMemberAddHandler({
+                id: 'member-7',
+                user: {id: 'member-7', bot: false},
+                guild: {id: 'guild-id', name: 'Noona Guild'},
+            });
+
+            assert.deepEqual(sentMessages, [{
+                channelId: 'channel-42',
+                payload: {
+                    content: 'Welcome to Noona Guild, <@member-7>! Start with https://moon.example/',
+                },
+            }]);
+            assert.equal(runtime.discordStatus, 'ok');
+        } finally {
+            await stopPortal();
+        }
+    },
+);
+
+test(
+    'startPortal prepends the member mention when onboarding template omits user_mention',
+    {concurrency: false},
+    async () => {
+        const sentMessages = [];
+        let guildMemberAddHandler = null;
+
+        const runtime = await startPortal({
+            env: {
+                ...REQUIRED_ENV,
+                DISCORD_BOT_TOKEN: 'good-token',
+                DISCORD_CLIENT_ID: 'client-id',
+                DISCORD_GUILD_ID: 'guild-id',
+            },
+            dependencies: {
+                createVaultClient: () => ({
+                    readSetting: async () => ({
+                        key: 'discord.onboarding_message',
+                        template: 'Welcome to {guild_name}!',
+                        channelId: 'channel-99',
+                    }),
+                }),
+                createOnboardingStore: () => ({
+                    consumeToken: async () => null,
+                    getToken: async () => null,
+                    setToken: async () => null,
+                }),
+                createPortalSlashCommands: () => [],
+                createDirectMessageHandler: () => async () => {
+                },
+                createDiscordClient: (options) => {
+                    guildMemberAddHandler = options.guildMemberAddHandler;
+                    return {
+                        login: async () => {
+                        },
+                        client: {},
+                        sendChannelMessage: async (channelId, payload) => {
+                            sentMessages.push({channelId, payload});
+                        },
+                        destroy: () => {
+                        },
+                    };
+                },
+                createDiscordPresenceUpdater: () => ({
+                    start: () => {
+                    },
+                    stop: () => {
+                    },
+                }),
+                createRecommendationNotifier: () => ({
+                    start: () => {
+                    },
+                    stop: () => {
+                    },
+                }),
+                createSubscriptionNotifier: () => ({
+                    start: () => {
+                    },
+                    stop: () => {
+                    },
+                }),
+            },
+        });
+
+        try {
+            await guildMemberAddHandler({
+                id: 'member-8',
+                user: {id: 'member-8', bot: false},
+                guild: {id: 'guild-id', name: 'Noona Guild'},
+            });
+
+            assert.deepEqual(sentMessages, [{
+                channelId: 'channel-99',
+                payload: {
+                    content: '<@member-8>\n\nWelcome to Noona Guild!',
+                },
+            }]);
+            assert.equal(runtime.discordStatus, 'ok');
+        } finally {
+            await stopPortal();
+        }
+    },
+);

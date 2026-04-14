@@ -163,19 +163,19 @@ export function BootScreenPage({returnToParam}: Props) {
                         <Column gap="12">
                             <Row gap="8" vertical="center" style={{flexWrap: "wrap"}}>
                                 <Badge background="brand-alpha-weak" onBackground="neutral-strong">
-                                    Manual boot
+                                    Recovery
                                 </Badge>
                                 <Heading as="h1" variant="heading-strong-l">
-                                    Start the saved ecosystem
+                                    Restart the saved ecosystem
                                 </Heading>
                             </Row>
                             <Text onBackground="neutral-weak" variant="body-default-s">
-                                Setup is complete, but the saved Noona ecosystem is still in minimal mode. Start the
-                                managed stack to bring the rest of your services back online.
+                                Healthy completed installs now auto-resume the saved Noona stack. Use this recovery
+                                screen only when you intentionally need to restart the managed services yourself.
                             </Text>
                             <Text onBackground="neutral-weak" variant="body-default-xs">
-                                Moon will open the shared lifecycle monitor, watch the control plane recover, and then
-                                send you back to {returnTargetLabel}.
+                                Moon will open the shared lifecycle monitor, bring the core services back first, and
+                                then send you back to {returnTargetLabel} after the saved target stabilizes.
                             </Text>
 
                             {!loading && status ? (
@@ -214,7 +214,7 @@ export function BootScreenPage({returnToParam}: Props) {
                                                 <Text onBackground="neutral-weak"
                                                       variant="label-default-xs">Selection</Text>
                                                 <Heading as="h3" variant="heading-strong-m">
-                                                    {status.selectionMode === "selected" ? "Saved set" : "Minimal"}
+                                                    {status.selectionMode === "selected" ? "Saved set" : "Core only"}
                                                 </Heading>
                                                 <Text onBackground="neutral-weak" variant="body-default-xs">Persisted
                                                     boot profile.</Text>
@@ -297,8 +297,8 @@ export function BootScreenPage({returnToParam}: Props) {
                                     <Column gap={10}>
                                         <Heading as="h2" variant="heading-strong-l">Returns first</Heading>
                                         <Text onBackground="neutral-weak" variant="body-default-s">
-                                            These services are required before the rest of the saved stack can be
-                                            considered healthy.
+                                            These core services come back first so the saved stack can restore its
+                                            runtime config before the optional apps continue.
                                         </Text>
                                         <Row gap="8" style={{flexWrap: "wrap"}}>
                                             {requiredServices.map((serviceName) => (
@@ -316,7 +316,7 @@ export function BootScreenPage({returnToParam}: Props) {
                                         <Heading as="h2" variant="heading-strong-l">Saved target</Heading>
                                         <Text onBackground="neutral-weak" variant="body-default-s">
                                             These are the additional services from your saved setup selection that Moon
-                                            will wait on.
+                                            will wait on after the core recovery set is healthy.
                                         </Text>
                                         {selectedServices.length > 0 ? (
                                             <Row gap="8" style={{flexWrap: "wrap"}}>

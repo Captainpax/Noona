@@ -3,6 +3,7 @@ import {
   ChangeDetectorRef,
   Component,
   computed,
+  DestroyRef,
   effect,
   inject,
   OnInit,
@@ -20,6 +21,16 @@ import {environment} from "../../../environments/environment";
 import {ImageComponent} from "../../shared/image/image.component";
 import {SettingsService} from 'src/app/admin/settings.service';
 import {OidcPublicConfig} from "../../admin/_models/oidc-config";
+import {firstValueFrom, forkJoin} from 'rxjs';
+
+const NOONA_ADMIN_BOOTSTRAP_POLL_ATTEMPTS = 10;
+const NOONA_ADMIN_BOOTSTRAP_POLL_DELAY_MS = 2000;
+const NOONA_ADMIN_BOOTSTRAP_WAITING_MESSAGE =
+  'Noona is finishing managed Kavita setup. This page will unlock automatically once the first Kavita admin is ready.';
+const NOONA_ADMIN_BOOTSTRAP_FAILED_MESSAGE =
+  'Noona is still waiting for the managed Kavita admin bootstrap. Return to Moon or Warden and confirm the managed Kavita setup completed.';
+const NOONA_ADMIN_BOOTSTRAP_ERROR_MESSAGE =
+  'Kavita could not confirm whether Noona finished the managed bootstrap. Return to Moon or Warden and try again.';
 
 @Component({
   selector: 'app-user-login',
@@ -37,7 +48,10 @@ export class UserLoginComponent implements OnInit {
   private readonly navService = inject(NavService);
   private readonly cdRef = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
+  noonaAdminBootstrapState = signal<'ready' | 'waiting' | 'failed'>('ready');
   protected readonly settingsService = inject(SettingsService);
+  noonaAdminBootstrapMessage = signal('');
+  showNoonaAdminBootstrapNotice = computed(() => this.noonaAdminBootstrapState() !== 'ready');
 
   baseUrl = environment.apiUrl.substring(0, environment.apiUrl.indexOf("api"));
 
@@ -62,6 +76,8 @@ export class UserLoginComponent implements OnInit {
   forceShowPasswordLogin = signal(false);
   oidcConfig = signal<OidcPublicConfig | undefined>(undefined);
   noonaConfig = signal<NoonaLoginConfig | undefined>(undefined);
+  private readonly destroyRef = inject(DestroyRef);
+  private noonaAdminBootstrapPollGeneration = 0;
 
   /**
    * Display the login form
@@ -79,10 +95,15 @@ export class UserLoginComponent implements OnInit {
   });
   showOidcButton = computed(() => this.oidcConfig()?.enabled ?? false);
   showNoonaButton = computed(() => this.noonaConfig()?.enabled ?? false);
+  private noonaAdminBootstrapPollCancelled = false;
 
   constructor() {
     this.navService.hideNavBar();
     this.navService.hideSideNav();
+    this.destroyRef.onDestroy(() => {
+      this.noonaAdminBootstrapPollCancelled = true;
+      this.noonaAdminBootstrapPollGeneration += 1;
+    });
 
     effect(() => {
       const skipAutoLogin = this.skipAutoLogin();
@@ -108,17 +129,32 @@ export class UserLoginComponent implements OnInit {
     this.settingsService.getPublicOidcConfig().subscribe(config => {
       this.oidcConfig.set(config);
     });
-    this.accountService.getNoonaConfig().subscribe(config => {
-      this.noonaConfig.set(config);
-    });
+    forkJoin({
+      noonaConfig: this.accountService.getNoonaConfig(),
+      adminExists: this.memberService.adminExists(),
+    }).subscribe({
+      next: ({noonaConfig, adminExists}) => {
+        this.noonaConfig.set(noonaConfig);
 
-    this.memberService.adminExists().subscribe(adminExists => {
-      if (!adminExists) {
-        this.router.navigateByUrl('registration/register');
-        return;
+        if (!adminExists) {
+          if (noonaConfig.enabled) {
+            this.beginNoonaAdminBootstrapWait();
+            return;
+          }
+
+          this.router.navigateByUrl('registration/register');
+          return;
+        }
+
+        this.noonaAdminBootstrapState.set('ready');
+        this.noonaAdminBootstrapMessage.set('');
+        this.isLoaded.set(true);
+      },
+      error: () => {
+        this.noonaAdminBootstrapState.set('failed');
+        this.noonaAdminBootstrapMessage.set(NOONA_ADMIN_BOOTSTRAP_ERROR_MESSAGE);
+        this.isLoaded.set(true);
       }
-
-      this.isLoaded.set(true);
     });
 
     this.route.queryParamMap.subscribe(params => {
@@ -161,6 +197,61 @@ export class UserLoginComponent implements OnInit {
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
+  }
+
+  retryNoonaAdminBootstrap() {
+    if (this.noonaAdminBootstrapState() === 'waiting') {
+      return;
+    }
+
+    this.beginNoonaAdminBootstrapWait();
+  }
+
+  private async pollForNoonaAdminBootstrap(generation: number) {
+    for (let attempt = 1; attempt <= NOONA_ADMIN_BOOTSTRAP_POLL_ATTEMPTS; attempt += 1) {
+      if (generation !== this.noonaAdminBootstrapPollGeneration || this.noonaAdminBootstrapPollCancelled) {
+        return;
+      }
+
+      if (attempt > 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, NOONA_ADMIN_BOOTSTRAP_POLL_DELAY_MS));
+        if (generation !== this.noonaAdminBootstrapPollGeneration || this.noonaAdminBootstrapPollCancelled) {
+          return;
+        }
+      }
+
+      try {
+        const adminExists = await firstValueFrom(this.memberService.adminExists());
+        if (generation !== this.noonaAdminBootstrapPollGeneration || this.noonaAdminBootstrapPollCancelled) {
+          return;
+        }
+
+        if (adminExists) {
+          this.noonaAdminBootstrapState.set('ready');
+          this.noonaAdminBootstrapMessage.set('');
+          return;
+        }
+      } catch {
+        if (attempt >= NOONA_ADMIN_BOOTSTRAP_POLL_ATTEMPTS) {
+          break;
+        }
+      }
+    }
+
+    if (generation !== this.noonaAdminBootstrapPollGeneration || this.noonaAdminBootstrapPollCancelled) {
+      return;
+    }
+
+    this.noonaAdminBootstrapState.set('failed');
+    this.noonaAdminBootstrapMessage.set(NOONA_ADMIN_BOOTSTRAP_FAILED_MESSAGE);
+  }
+
+  private beginNoonaAdminBootstrapWait() {
+    this.noonaAdminBootstrapState.set('waiting');
+    this.noonaAdminBootstrapMessage.set(NOONA_ADMIN_BOOTSTRAP_WAITING_MESSAGE);
+    this.isLoaded.set(true);
+    const generation = ++this.noonaAdminBootstrapPollGeneration;
+    void this.pollForNoonaAdminBootstrap(generation);
   }
 
 

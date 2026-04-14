@@ -3,7 +3,7 @@
  * Related files:
  * - discord/directMessageRouter.mjs
  * - clients/ravenClient.mjs
- * Times this file has been edited: 1
+ * Times this file has been edited: 2
  */
 
 import assert from 'node:assert/strict';
@@ -80,8 +80,8 @@ test('createDirectMessageHandler accepts downloadall prefixes for the configured
         await handler(message);
 
         assert.equal(replies.length, 2);
-        assert.match(replies[0].content, /Queueing Raven bulk download/i);
-        assert.match(replies[1].content, /Raven bulk queue finished/i);
+        assert.match(replies[0].content, /Queueing Noona bulk download/i);
+        assert.match(replies[1].content, /Noona bulk queue finished/i);
         assert.match(replies[1].content, /Queued titles \(first 10\)/i);
     }
 

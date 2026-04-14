@@ -5,7 +5,7 @@
  * - src/main/java/com/paxkun/raven/service/library/DownloadedFile.java
  * - src/main/java/com/paxkun/raven/service/library/NewTitle.java
  * - src/main/java/com/paxkun/raven/service/library/TitleFilesResponse.java
- * Times this file has been edited: 12
+ * Times this file has been edited: 13
  */
 package com.paxkun.raven.controller;
 
@@ -172,9 +172,13 @@ public class LibraryController {
             return ResponseEntity.badRequest().body(java.util.Map.of("error", "uuid is required."));
         }
 
-        boolean deleted = libraryService.deleteTitle(uuid.trim());
-        if (!deleted) {
-            return ResponseEntity.notFound().build();
+        try {
+            boolean deleted = libraryService.deleteTitle(uuid.trim());
+            if (!deleted) {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (IllegalStateException e) {
+            return ResponseEntity.internalServerError().body(java.util.Map.of("error", e.getMessage()));
         }
 
         return ResponseEntity.ok(java.util.Map.of("deleted", true));
@@ -304,7 +308,8 @@ public class LibraryController {
             return ResponseEntity.notFound().build();
         }
 
-        return ResponseEntity.ok(result);
+        int status = "queued".equals(result.status()) ? 202 : 200;
+        return ResponseEntity.status(status).body(result);
     }
 
     /**
@@ -316,7 +321,8 @@ public class LibraryController {
     @PostMapping("/v1/library/checkForNew")
     public ResponseEntity<LibraryService.LibrarySyncSummary> checkForNewChapters() {
         LibraryService.LibrarySyncSummary result = libraryService.checkForNewChapters();
-        return ResponseEntity.ok(result);
+        int status = result.queuedChapters() > 0 ? 202 : 200;
+        return ResponseEntity.status(status).body(result);
     }
 
     /**

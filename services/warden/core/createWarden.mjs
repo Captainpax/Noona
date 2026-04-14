@@ -108,8 +108,15 @@ const MANAGED_KAVITA_SERVICE_NAME = 'noona-kavita';
 const MANAGED_MOON_SERVICE_NAME = 'noona-moon';
 const MANAGED_KOMF_CONFIG_ENV_KEY = 'KOMF_APPLICATION_YML';
 const DEFAULT_NOONA_PORTAL_BASE_URL = 'http://noona-portal:3003';
+const DEFAULT_NOONA_BOOTSTRAP_ADMIN_ON_START = 'true';
 const DEFAULT_NOONA_SOCIAL_LOGIN_ONLY = 'true';
 const MANAGED_KAVITA_DEFAULT_ENV_FALLBACK_KEYS = new Set([
+    'NOONA_BOOTSTRAP_ADMIN_ON_START',
+    'NOONA_MOON_BASE_URL',
+    'NOONA_PORTAL_BASE_URL',
+    'NOONA_SOCIAL_LOGIN_ONLY',
+]);
+const MANAGED_KAVITA_EDITABLE_NOONA_ENV_KEYS = new Set([
     'NOONA_MOON_BASE_URL',
     'NOONA_PORTAL_BASE_URL',
     'NOONA_SOCIAL_LOGIN_ONLY',
@@ -738,7 +745,7 @@ export function createWarden(options = {}) {
         'noona-portal',
         'noona-oracle',
     ];
-    const minimalServiceNames = ['noona-sage', 'noona-moon'];
+    const minimalServiceNames = ['noona-mongo', 'noona-redis', 'noona-vault', 'noona-sage', 'noona-moon'];
     const dependencyGraph = new Map([
         ['noona-vault', ['noona-mongo', 'noona-redis']],
         ['noona-komf', ['noona-kavita']],
@@ -3947,6 +3954,9 @@ export function createWarden(options = {}) {
         const portalBaseUrl =
             normalizeAbsoluteHttpUrl(envMap.NOONA_PORTAL_BASE_URL)
             || DEFAULT_NOONA_PORTAL_BASE_URL;
+        const bootstrapAdminOnStart =
+            normalizeBooleanSettingValue(envMap.NOONA_BOOTSTRAP_ADMIN_ON_START)
+            || DEFAULT_NOONA_BOOTSTRAP_ADMIN_ON_START;
         const socialLoginOnly =
             normalizeBooleanSettingValue(envMap.NOONA_SOCIAL_LOGIN_ONLY)
             || DEFAULT_NOONA_SOCIAL_LOGIN_ONLY;
@@ -3962,7 +3972,11 @@ export function createWarden(options = {}) {
         nextDescriptor = {
             ...nextDescriptor,
             env: upsertEnvEntry(
-                upsertEnvEntry(nextDescriptor.env, 'NOONA_PORTAL_BASE_URL', portalBaseUrl),
+                upsertEnvEntry(
+                    upsertEnvEntry(nextDescriptor.env, 'NOONA_PORTAL_BASE_URL', portalBaseUrl),
+                    'NOONA_BOOTSTRAP_ADMIN_ON_START',
+                    bootstrapAdminOnStart,
+                ),
                 'NOONA_SOCIAL_LOGIN_ONLY',
                 socialLoginOnly,
             ),
@@ -4239,8 +4253,30 @@ export function createWarden(options = {}) {
                 continue;
             }
 
-            const field = fieldMap.get(key);
+            const field = fieldMap.get(key)
+                || (
+                    normalizedName === MANAGED_KAVITA_SERVICE_NAME
+                    && MANAGED_KAVITA_EDITABLE_NOONA_ENV_KEYS.has(key)
+                        ? {key}
+                        : null
+                );
+            const incomingValue = rawValue == null ? '' : String(rawValue);
+            const currentValue = Object.prototype.hasOwnProperty.call(current, key)
+                ? (current[key] == null ? '' : String(current[key]))
+                : '';
+
             if (!field) {
+                if (normalizedName === MANAGED_KAVITA_SERVICE_NAME && key === 'NOONA_BOOTSTRAP_ADMIN_ON_START') {
+                    const normalizedIncomingValue = normalizeBooleanSettingValue(incomingValue);
+                    const normalizedCurrentValue = normalizeBooleanSettingValue(currentValue);
+
+                    if (!incomingValue.trim() || (normalizedIncomingValue && normalizedIncomingValue === normalizedCurrentValue)) {
+                        continue;
+                    }
+
+                    throw new WardenValidationError(`${key} is managed by Warden and cannot be changed.`);
+                }
+
                 throw new WardenValidationError(`${key} is not a supported setting for ${normalizedName}.`);
             }
 
@@ -4248,10 +4284,6 @@ export function createWarden(options = {}) {
                 throw new WardenValidationError(`${key} is managed by Warden and cannot be changed.`);
             }
 
-            const incomingValue = rawValue == null ? '' : String(rawValue);
-            const currentValue = Object.prototype.hasOwnProperty.call(current, key)
-                ? (current[key] == null ? '' : String(current[key]))
-                : '';
             const snapshotValue = Object.prototype.hasOwnProperty.call(snapshotEnv, key)
                 ? (snapshotEnv[key] == null ? '' : String(snapshotEnv[key]))
                 : currentValue;

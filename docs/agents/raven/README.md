@@ -1,7 +1,7 @@
 # Raven AI Notes
 
-Raven is Noona's downloader, scraper, library worker, and VPN-aware acquisition service. Most edits fall into one of
-five areas: HTTP contracts, download orchestration, library/manifests, runtime workers, or VPN/settings behavior.
+Raven is Noona's downloader, scraper, library-sync, and VPN-aware acquisition service. Most edits fall into one of
+five areas: HTTP contracts, download orchestration, library/manifests, settings/runtime, or VPN behavior.
 
 ## Start Here
 
@@ -46,10 +46,6 @@ five areas: HTTP contracts, download orchestration, library/manifests, runtime w
 - Vault packet contracts or settings reads:
   [VaultService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/VaultService.java) and
   [SettingsService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/settings/SettingsService.java)
-- Child worker boot, CPU pinning, or Linux-only process-mode behavior:
-  [RavenWorkerLauncher.java](../../../services/raven/src/main/java/com/paxkun/raven/service/RavenWorkerLauncher.java),
-  [RavenWorkerRunner.java](../../../services/raven/src/main/java/com/paxkun/raven/service/RavenWorkerRunner.java), and
-  [RavenRuntimeProperties.java](../../../services/raven/src/main/java/com/paxkun/raven/service/RavenRuntimeProperties.java)
 - Kavita auto-library creation or scan behavior:
   [KavitaSyncService.java](../../../services/raven/src/main/java/com/paxkun/raven/service/KavitaSyncService.java)
 - PIA profiles, login tests, and rotation flow:
@@ -88,10 +84,14 @@ five areas: HTTP contracts, download orchestration, library/manifests, runtime w
   acknowledgement.
 - VPN rotation may only resume the downloads it paused for that rotation.
   Do not call the global "resume every paused or interrupted task" path from VPN rotation cleanup.
+- Raven download execution is intentionally serial.
+  One in-process executor owns one active download at a time, and queued recovery should resume in `queuedAt` order.
+- A chapter only counts as downloaded when Raven saved every expected page for that chapter.
+  Partial page sets must stay pending and retryable instead of producing a final CBZ entry.
 
 ## Update Triggers
 
 - If naming, folder layout, `.noona` manifests, import checks, or VPN behavior change, update admin-facing docs too.
 - If you change route payloads or status summaries, update the controller tests in the same change.
-- If you change worker mode assumptions, read the runtime and worker docs first. Thread mode and process mode share the
-  same persisted task contract.
+- If you change queueing, restore order, or download-limit assumptions, update the Raven flow and storage notes in the
+  same change.
