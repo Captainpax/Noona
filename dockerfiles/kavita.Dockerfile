@@ -61,10 +61,9 @@ RUN apt-get update \
 COPY --from=publisher /out /kavita
 COPY services/kavita/API/config/appsettings.json /tmp/config/appsettings.json
 COPY services/kavita/entrypoint.sh /entrypoint.sh
-COPY services/kavita/noona-bootstrap-admin.sh /noona-bootstrap-admin.sh
 COPY utilities/etc/warden_runtime_bootstrap.py /warden_runtime_bootstrap.py
 
-RUN chmod +x /entrypoint.sh /noona-bootstrap-admin.sh /warden_runtime_bootstrap.py
+RUN chmod +x /entrypoint.sh /warden_runtime_bootstrap.py
 
 EXPOSE 5000
 

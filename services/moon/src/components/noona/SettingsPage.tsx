@@ -103,6 +103,7 @@ type EnvConfigField = {
     required?: boolean;
     readOnly?: boolean;
     serverManaged?: boolean;
+    advanced?: boolean;
 };
 
 type ServiceConfig = {
@@ -177,6 +178,21 @@ type KavitaUserRoleUpdateResponse = {
     ok?: boolean;
     user?: KavitaUserSummary | null;
     roles?: string[] | null;
+    error?: string;
+};
+
+type ManagedKavitaServiceKeyResponse = {
+    apiKey?: string | null;
+    baseUrl?: string | null;
+    mode?: string | null;
+    services?: string[] | null;
+    updatedServices?: Array<{
+        name?: string | null;
+        baseUrl?: string | null;
+        apiKeyField?: string | null;
+        restarted?: boolean | null;
+    }> | null;
+    manualFallbackRequired?: boolean;
     error?: string;
 };
 
@@ -1156,6 +1172,10 @@ export function SettingsPage({selection}: SettingsPageProps) {
     const [kavitaUsersMessage, setKavitaUsersMessage] = useState<string | null>(null);
     const [kavitaUsers, setKavitaUsers] = useState<KavitaUserSummary[]>([]);
     const [kavitaRoleOptions, setKavitaRoleOptions] = useState<string[]>([]);
+    const [managedKavitaServiceKeyDraft, setManagedKavitaServiceKeyDraft] = useState("");
+    const [managedKavitaServiceKeySaving, setManagedKavitaServiceKeySaving] = useState(false);
+    const [managedKavitaServiceKeyError, setManagedKavitaServiceKeyError] = useState<string | null>(null);
+    const [managedKavitaServiceKeyMessage, setManagedKavitaServiceKeyMessage] = useState<string | null>(null);
     const [editingKavitaRoles, setEditingKavitaRoles] = useState<Record<string, string[]>>({});
     const [savingKavitaRoles, setSavingKavitaRoles] = useState<Record<string, boolean>>({});
 
@@ -2045,6 +2065,58 @@ export function SettingsPage({selection}: SettingsPageProps) {
             patchEditor(serviceName, {error: msg});
         } finally {
             patchEditor(serviceName, {restarting: false});
+        }
+    };
+
+    const syncManagedKavitaServiceKey = async ({
+                                                   apiKey = null,
+                                               }: {
+        apiKey?: string | null;
+    } = {}) => {
+        const targetServices = ["noona-portal", "noona-raven", "noona-komf"];
+        const normalizedApiKey = normalizeString(apiKey).trim();
+
+        if (!normalizedApiKey) {
+            setManagedKavitaServiceKeyError("Paste an admin-capable Kavita API key before saving.");
+            setManagedKavitaServiceKeyMessage(null);
+            return false;
+        }
+
+        setManagedKavitaServiceKeySaving(true);
+        setManagedKavitaServiceKeyError(null);
+        setManagedKavitaServiceKeyMessage(null);
+        try {
+            const res = await fetch("/api/noona/settings/services/noona-kavita/service-key", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    services: targetServices,
+                    apiKey: normalizedApiKey,
+                }),
+            });
+            const json = (await res.json().catch(() => null)) as ManagedKavitaServiceKeyResponse | null;
+            if (!res.ok) {
+                setManagedKavitaServiceKeyError(
+                    parseError(json, `Failed to sync the managed Kavita API key (HTTP ${res.status}).`),
+                );
+                return false;
+            }
+
+            await Promise.all([
+                ...targetServices.map((serviceName) => loadServiceConfig(serviceName)),
+                loadServiceConfig("noona-kavita"),
+            ]);
+            setManagedKavitaServiceKeyDraft("");
+            setManagedKavitaServiceKeyMessage(
+                "Saved the Kavita API key, re-locked managed Kavita behind Noona sign-in, and synced Portal, Raven, and Komf.",
+            );
+            return true;
+        } catch (error_) {
+            const msg = error_ instanceof Error ? error_.message : String(error_);
+            setManagedKavitaServiceKeyError(msg);
+            return false;
+        } finally {
+            setManagedKavitaServiceKeySaving(false);
         }
     };
 
@@ -3676,6 +3748,7 @@ export function SettingsPage({selection}: SettingsPageProps) {
             const key = normalizeString(field.key).trim();
             if (!key) return null;
             if (field.readOnly && !currentEditor.advanced) return null;
+            if (field.advanced === true && !currentEditor.advanced) return null;
 
             if (key === KOMF_APPLICATION_YML_KEY) {
                 return (
@@ -3825,6 +3898,57 @@ export function SettingsPage({selection}: SettingsPageProps) {
                         )}
                         {!currentEditor.loading && isPortalTab && isPortalService && portalSubtab === "kavita" && (
                             <Column gap="12">
+                                <Card
+                                    fillWidth
+                                    background={BG_SURFACE}
+                                    border="warning-alpha-weak"
+                                    padding="m"
+                                    radius="l"
+                                >
+                                    <Column gap="12">
+                                        <Heading as="h3" variant="heading-strong-m">Managed Kavita API key</Heading>
+                                        <Text onBackground="neutral-weak" variant="body-default-xs">
+                                            Open Kavita, sign in as an admin, create or copy an admin-capable API
+                                            key, then paste it here. Moon validates the key, syncs it into Portal,
+                                            Raven, and Komf, and flips managed Kavita back to Noona-login-only mode.
+                                        </Text>
+                                        <Input
+                                            id="settings-managed-kavita-api-key"
+                                            name="settings-managed-kavita-api-key"
+                                            label="Admin-capable Kavita API key"
+                                            type="password"
+                                            value={managedKavitaServiceKeyDraft}
+                                            disabled={managedKavitaServiceKeySaving}
+                                            onChange={(event) => setManagedKavitaServiceKeyDraft(event.target.value)}
+                                        />
+                                        {managedKavitaServiceKeyError && (
+                                            <Text onBackground="danger-strong" variant="body-default-xs">
+                                                {managedKavitaServiceKeyError}
+                                            </Text>
+                                        )}
+                                        {managedKavitaServiceKeyMessage && (
+                                            <Text onBackground="neutral-weak" variant="body-default-xs">
+                                                {managedKavitaServiceKeyMessage}
+                                            </Text>
+                                        )}
+                                        <Row gap="8" style={{flexWrap: "wrap"}}>
+                                            <Button
+                                                variant="primary"
+                                                disabled={
+                                                    managedKavitaServiceKeySaving
+                                                    || !normalizeString(managedKavitaServiceKeyDraft).trim()
+                                                }
+                                                onClick={() =>
+                                                    void syncManagedKavitaServiceKey({
+                                                        apiKey: managedKavitaServiceKeyDraft,
+                                                    })
+                                                }
+                                            >
+                                                {managedKavitaServiceKeySaving ? "Saving..." : "Save and sync API key"}
+                                            </Button>
+                                        </Row>
+                                    </Column>
+                                </Card>
                                 {renderFieldBlock(
                                     "Service connections",
                                     genericFields,

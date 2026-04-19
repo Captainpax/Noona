@@ -426,9 +426,10 @@ export const deriveSetupProfileInternals = (snapshot = {}) => {
     if (profile.kavita.mode === 'managed') {
         values['noona-kavita'] = {
             ...(values['noona-kavita'] || {}),
-            KAVITA_ADMIN_USERNAME: normalizeOptionalString(profile.kavita.account?.username),
-            KAVITA_ADMIN_EMAIL: normalizeOptionalString(profile.kavita.account?.email),
-            KAVITA_ADMIN_PASSWORD: normalizeOptionalString(profile.kavita.account?.password),
+            NOONA_BOOTSTRAP_ADMIN_ON_START:
+                normalizeOptionalString(profile.values?.['noona-kavita']?.NOONA_BOOTSTRAP_ADMIN_ON_START) || 'false',
+            NOONA_SOCIAL_LOGIN_ONLY:
+                normalizeOptionalString(profile.values?.['noona-kavita']?.NOONA_SOCIAL_LOGIN_ONLY) || 'false',
         };
     }
 

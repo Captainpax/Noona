@@ -2,6 +2,7 @@
 
 import {normalizeServiceInstallPayload, WardenUpstreamHttpError} from '../app/createSetupClient.mjs'
 import {SetupValidationError} from '../lib/errors.mjs'
+import {getManagedKavitaServiceKeyStatus, syncManagedKavitaServiceKey} from './managedKavitaServiceKey.mjs'
 import {createDefaultWizardState, resolveWizardStateOperation} from '../wizard/wizardStateSchema.mjs'
 
 const MANAGED_KAVITA_BASE_URL = 'http://noona-kavita:5000'
@@ -1186,181 +1187,64 @@ export function registerSetupRoutes(context = {}) {
         }
     })
 
-    app.post('/api/setup/services/noona-kavita/service-key', async (req, res) => {
-        const targetServices = normalizeManagedServiceList(req.body?.services)
-        if (targetServices.length === 0) {
-            res.status(400).json({error: 'Select at least one managed service to receive the Kavita API key.'})
-            return
-        }
-
+    app.get('/api/setup/services/noona-kavita/service-key', async (req, res) => {
         try {
-            const requestedAccountState = parseManagedKavitaAccount(req.body?.account)
-            const [managedKavitaConfig, targetConfigs] = await Promise.all([
-                setupClient.getServiceConfig('noona-kavita', {includeSecrets: true}),
-                Promise.all(
-                    targetServices.map(async (name) => [name, await setupClient.getServiceConfig(name, {includeSecrets: true})]),
-                ),
-            ])
-            const configuredAccountState = readManagedKavitaConfiguredAccount(managedKavitaConfig)
-            const configs = new Map(targetConfigs)
+            const queryServices = []
+            for (const rawValue of [req.query?.services, req.query?.service]) {
+                if (Array.isArray(rawValue)) {
+                    queryServices.push(...rawValue)
+                    continue
+                }
 
-            const candidateApiKeys = []
-            let reusableServiceCandidate = null
-            for (const targetServiceName of targetServices) {
-                const env = normalizeEnvMap(configs.get(targetServiceName)?.env)
-                const keyName = resolveManagedKavitaEnvKey(targetServiceName)
-                const existingKey = keyName ? normalizeUnmaskedSecret(env[keyName]) : ''
-                if (existingKey) {
-                    const candidate = {
-                        key: existingKey,
-                        source: 'existing',
-                        pluginName: targetServiceName,
-                    }
-                    candidateApiKeys.push(candidate)
-                    reusableServiceCandidate ||= candidate
+                if (typeof rawValue === 'string' && rawValue.trim()) {
+                    queryServices.push(...rawValue.split(','))
                 }
             }
 
-            const storedSettings = await loadManagedKavitaStoredSettings({
-                vaultClient,
-                settingsCollection,
+            const payload = await getManagedKavitaServiceKeyStatus({
+                body: {
+                    services: queryServices,
+                },
                 logger,
+                managedKavitaSetupClient,
                 serviceName,
-            })
-            const {apiKey: storedApiKey, account: storedAccount} = readManagedKavitaSettings(storedSettings)
-
-            if (storedApiKey) {
-                candidateApiKeys.unshift({
-                    key: storedApiKey,
-                    source: 'stored',
-                    pluginName: 'noona-sage',
-                })
-            }
-
-            const effectiveAccount = requestedAccountState.account || configuredAccountState.account || null
-            const maskedPasswordPending =
-                requestedAccountState.hasMaskedPassword || configuredAccountState.hasMaskedPassword
-
-            if (!effectiveAccount && maskedPasswordPending && candidateApiKeys.length === 0) {
-                throw new SetupValidationError(MASKED_MANAGED_KAVITA_PASSWORD_ERROR)
-            }
-
-            let provisioning = reusableServiceCandidate
-                ? {
-                    apiKey: reusableServiceCandidate.key,
-                    account: null,
-                    mode: reusableServiceCandidate.source,
-                }
-                : null
-            let lastError = null
-
-            if (!provisioning) {
-                for (let attempt = 1; attempt <= MANAGED_KAVITA_READY_RETRIES; attempt += 1) {
-                    try {
-                        provisioning = await managedKavitaSetupClient.ensureServiceApiKey({
-                            account: effectiveAccount,
-                            allowRegister: maskedPasswordPending ? false : true,
-                            candidateApiKeys,
-                        })
-                        break
-                    } catch (error) {
-                        if (
-                            maskedPasswordPending &&
-                            error instanceof SetupValidationError &&
-                            /account credentials or registration enabled/i.test(error.message)
-                        ) {
-                            throw new SetupValidationError(MASKED_MANAGED_KAVITA_PASSWORD_ERROR)
-                        }
-
-                        if (error instanceof SetupValidationError) {
-                            throw error
-                        }
-
-                        lastError = error
-                        logger.warn?.(
-                            `[${serviceName}] Managed Kavita key provisioning attempt ${attempt}/${MANAGED_KAVITA_READY_RETRIES} failed: ${error instanceof Error ? error.message : error}`,
-                        )
-
-                        if (attempt < MANAGED_KAVITA_READY_RETRIES) {
-                            await wait(MANAGED_KAVITA_READY_DELAY_MS)
-                        }
-                    }
-                }
-            }
-
-            if (!provisioning) {
-                throw lastError || new Error('Unable to provision a managed Kavita API key.')
-            }
-
-            const apiKey = normalizeString(provisioning.apiKey)
-            let account =
-                provisioning.account
-                    ? {
-                        username: normalizeString(provisioning.account.username),
-                        email: normalizeString(provisioning.account.email),
-                    }
-                    : storedAccount ||
-                    (effectiveAccount
-                        ? {
-                            username: normalizeString(effectiveAccount.username),
-                            email: normalizeString(effectiveAccount.email),
-                        }
-                        : null)
-            const mode = provisioning.mode
-
-            if (!apiKey) {
-                throw new Error('Managed Kavita setup did not produce an API key.')
-            }
-
-            const updatedServices = []
-            for (const targetServiceName of targetServices) {
-                const currentConfig = configs.get(targetServiceName)
-                const env = normalizeEnvMap(currentConfig?.env)
-                const patch = buildManagedKavitaEnvPatch(targetServiceName, env, apiKey, MANAGED_KAVITA_BASE_URL)
-                const response = await setupClient.updateServiceConfig(targetServiceName, {
-                    env: patch,
-                    restart: true,
-                })
-
-                updatedServices.push({
-                    name: targetServiceName,
-                    baseUrl: normalizeString(
-                        patch[resolveManagedKavitaBaseUrlKey(targetServiceName) ?? ''],
-                    ) || MANAGED_KAVITA_BASE_URL,
-                    apiKeyField: resolveManagedKavitaEnvKey(targetServiceName),
-                    restarted: Boolean(response?.restarted),
-                })
-            }
-
-            await persistManagedKavitaStoredSettings({
-                account,
-                apiKey,
-                vaultClient,
                 settingsCollection,
-                logger,
-                serviceName,
+                setupClient,
+                vaultClient,
             })
 
-            res.json({
-                apiKey,
-                baseUrl: MANAGED_KAVITA_BASE_URL,
-                mode,
-                account: account
-                    ? {
-                        username: normalizeString(account.username),
-                        email: normalizeString(account.email),
-                    }
-                    : null,
-                services: targetServices,
-                updatedServices,
-            })
+            res.status(payload?.manualFallbackRequired === true ? 409 : 200).json(payload)
         } catch (error) {
             if (error instanceof SetupValidationError) {
                 res.status(400).json({error: error.message})
                 return
             }
 
-            logger.error(`[${serviceName}] âŒ Managed Kavita key provisioning failed: ${error.message}`)
+            logger.error(`[${serviceName}] Managed Kavita key status lookup failed: ${error.message}`)
+            res.status(502).json({error: 'Unable to load managed Kavita recovery status.'})
+        }
+    })
+
+    app.post('/api/setup/services/noona-kavita/service-key', async (req, res) => {
+        try {
+            const payload = await syncManagedKavitaServiceKey({
+                body: req.body ?? {},
+                logger,
+                managedKavitaSetupClient,
+                serviceName,
+                settingsCollection,
+                setupClient,
+                vaultClient,
+            })
+
+            res.status(payload?.manualFallbackRequired === true ? 409 : 200).json(payload)
+        } catch (error) {
+            if (error instanceof SetupValidationError) {
+                res.status(400).json({error: error.message})
+                return
+            }
+
+            logger.error(`[${serviceName}] Managed Kavita key provisioning failed: ${error.message}`)
             res.status(502).json({error: 'Unable to provision the managed Kavita API key.'})
         }
     })

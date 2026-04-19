@@ -139,6 +139,7 @@ const createEnvField = (key, defaultValue, {
     readOnly = false,
     sensitive = false,
     serverManaged = false,
+    advanced = false,
 } = {}) => ({
     key,
     label,
@@ -149,6 +150,7 @@ const createEnvField = (key, defaultValue, {
     readOnly,
     sensitive,
     serverManaged,
+    advanced,
 });
 
 const serviceDefs = rawList.map(name => {
@@ -486,6 +488,7 @@ const serviceDefs = rawList.map(name => {
                 description: 'Polling interval in milliseconds for Portal Discord bot activity updates.',
                 defaultValue: DEFAULT_PORTAL_ACTIVITY_POLL_MS,
                 required: false,
+                advanced: true,
             },
             {
                 key: 'PORTAL_REDIS_NAMESPACE',
@@ -493,6 +496,7 @@ const serviceDefs = rawList.map(name => {
                 description: 'Namespace prefix used for Portal onboarding state stored through Vault-backed Redis.',
                 defaultValue: 'portal:onboarding',
                 required: false,
+                advanced: true,
             },
             {
                 key: 'PORTAL_DM_QUEUE_NAMESPACE',
@@ -500,6 +504,7 @@ const serviceDefs = rawList.map(name => {
                 description: 'Namespace prefix used for Portal Discord DM queue state stored through Vault-backed Redis.',
                 defaultValue: 'portal:discord:dm',
                 required: false,
+                advanced: true,
             },
             {
                 key: 'PORTAL_TOKEN_TTL',
@@ -507,6 +512,7 @@ const serviceDefs = rawList.map(name => {
                 description: 'Time-to-live in seconds for onboarding tokens cached in Redis.',
                 defaultValue: '900',
                 required: false,
+                advanced: true,
             },
             {
                 key: 'PORTAL_HTTP_TIMEOUT',
@@ -514,6 +520,7 @@ const serviceDefs = rawList.map(name => {
                 description: 'HTTP client timeout in milliseconds for outbound portal requests.',
                 defaultValue: '10000',
                 required: false,
+                advanced: true,
             },
             {
                 key: 'REQUIRED_GUILD_ID',

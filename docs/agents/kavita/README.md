@@ -15,9 +15,11 @@ upstream project some love here: [Kavita on GitHub](https://github.com/Kareadita
 
 - Most of [services/kavita](../../../services/kavita/) is upstream Kavita code. Treat it like vendored source, not a
   normal Noona-first service.
-- Noona's container wrapper is concentrated in [kavita.Dockerfile](../../../dockerfiles/kavita.Dockerfile),
-  [entrypoint.sh](../../../services/kavita/entrypoint.sh), and
-  [noona-bootstrap-admin.sh](../../../services/kavita/noona-bootstrap-admin.sh).
+- Noona's container wrapper is concentrated in [kavita.Dockerfile](../../../dockerfiles/kavita.Dockerfile) and
+  [entrypoint.sh](../../../services/kavita/entrypoint.sh).
+- Managed Kavita now uses a manual setup hand-off.
+  During initial setup, local first-admin registration and login must stay available until Moon accepts a manual
+  admin-capable API key and the service is switched back to Noona/social-login-only mode.
 - Noona login handoff is concentrated in
   [AccountController.cs](../../../services/kavita/API/Controllers/AccountController.cs),
   [account.service.ts](../../../services/kavita/UI/Web/src/app/_services/account.service.ts), and the
@@ -30,8 +32,6 @@ upstream project some love here: [Kavita on GitHub](https://github.com/Kareadita
 - Container build, runtime files, first-run config copy:
   [../../../dockerfiles/kavita.Dockerfile](../../../dockerfiles/kavita.Dockerfile) and
   [../../../services/kavita/entrypoint.sh](../../../services/kavita/entrypoint.sh)
-- Managed first-admin bootstrap:
-  [../../../services/kavita/noona-bootstrap-admin.sh](../../../services/kavita/noona-bootstrap-admin.sh)
 - Noona login config, Portal token consume, password-login gating:
   [../../../services/kavita/API/Controllers/AccountController.cs](../../../services/kavita/API/Controllers/AccountController.cs)
 - Browser-side Noona login button, callback handling, and token submit:

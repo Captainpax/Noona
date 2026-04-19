@@ -10,9 +10,6 @@ export const SETUP_PROFILE_VERSION = 3;
  * @property {SetupIntegrationMode} [kavitaMode]
  * @property {string} [kavitaBaseUrl]
  * @property {string} [kavitaApiKey]
- * @property {string} [kavitaAdminUsername]
- * @property {string} [kavitaAdminEmail]
- * @property {string} [kavitaAdminPassword]
  * @property {string} [kavitaSharedLibraryPath]
  * @property {SetupIntegrationMode} [komfMode]
  * @property {string} [komfBaseUrl]
@@ -67,9 +64,6 @@ export const buildSetupProfileSnapshot = ({
                                               kavitaMode = 'managed',
                                               kavitaBaseUrl = '',
                                               kavitaApiKey = '',
-                                              kavitaAdminUsername = '',
-                                              kavitaAdminEmail = '',
-                                              kavitaAdminPassword = '',
                                               kavitaSharedLibraryPath = '',
                                               komfMode = 'managed',
                                               komfBaseUrl = '',
@@ -86,9 +80,9 @@ export const buildSetupProfileSnapshot = ({
             apiKey: trimString(kavitaApiKey),
             sharedLibraryPath: trimString(kavitaSharedLibraryPath),
             account: {
-                username: trimString(kavitaAdminUsername),
-                email: trimString(kavitaAdminEmail),
-                password: normalizeString(kavitaAdminPassword),
+                username: '',
+                email: '',
+                password: '',
             },
         },
         komf: {
@@ -126,9 +120,6 @@ export const deriveSetupProfileValues = ({
                                              kavitaMode = 'managed',
                                              kavitaBaseUrl = '',
                                              kavitaApiKey = '',
-                                             kavitaAdminUsername = '',
-                                             kavitaAdminEmail = '',
-                                             kavitaAdminPassword = '',
                                              kavitaSharedLibraryPath = '',
                                              komfMode = 'managed',
                                              komfBaseUrl = '',
@@ -168,9 +159,14 @@ export const deriveSetupProfileValues = ({
         KAVITA_LIBRARY_ROOT: kavitaMode === 'managed' ? '/manga' : normalizeString(nextValues['noona-raven']?.KAVITA_LIBRARY_ROOT),
     });
     mergeEnv('noona-kavita', {
-        KAVITA_ADMIN_USERNAME: kavitaMode === 'managed' ? trimString(kavitaAdminUsername) : '',
-        KAVITA_ADMIN_EMAIL: kavitaMode === 'managed' ? trimString(kavitaAdminEmail) : '',
-        KAVITA_ADMIN_PASSWORD: kavitaMode === 'managed' ? trimString(kavitaAdminPassword) : '',
+        NOONA_BOOTSTRAP_ADMIN_ON_START:
+            kavitaMode === 'managed'
+                ? (normalizeString(nextValues['noona-kavita']?.NOONA_BOOTSTRAP_ADMIN_ON_START) || 'false')
+                : normalizeString(nextValues['noona-kavita']?.NOONA_BOOTSTRAP_ADMIN_ON_START),
+        NOONA_SOCIAL_LOGIN_ONLY:
+            kavitaMode === 'managed'
+                ? (normalizeString(nextValues['noona-kavita']?.NOONA_SOCIAL_LOGIN_ONLY) || 'false')
+                : normalizeString(nextValues['noona-kavita']?.NOONA_SOCIAL_LOGIN_ONLY),
     });
     mergeEnv('noona-komf', {
         KOMF_KAVITA_BASE_URI: resolvedKavitaBaseUrl,
@@ -214,10 +210,6 @@ export const hydrateSetupProfileState = ({
         kavitaMode: kavita.mode === 'external' ? 'external' : 'managed',
         kavitaBaseUrl: trimString(kavita.baseUrl) || 'http://noona-kavita:5000',
         kavitaApiKey: normalizeString(kavita.apiKey),
-        kavitaAdminUsername: trimString(kavita?.account?.username),
-        kavitaAdminEmail: trimString(kavita?.account?.email),
-        kavitaAdminPassword: normalizeString(kavita?.account?.password),
-        kavitaAdminPasswordConfirm: normalizeString(kavita?.account?.password),
         kavitaSharedLibraryPath: trimString(kavita.sharedLibraryPath) || trimString(defaultSharedLibraryPath),
         komfMode: komf.mode === 'external' ? 'external' : 'managed',
         komfBaseUrl: trimString(komf.baseUrl),

@@ -53,7 +53,8 @@ When persisted runtime config has not finished loading yet:
 5. Restart bootstrap services only if a config change or pulled image requires it.
 6. Start the remaining managed services, optionally forcing recreation for services whose image changed.
 
-This staging exists so Vault-backed config and managed Kavita access are available before Portal and Komf are recreated.
+This staging exists so Vault-backed config and managed Kavita access are available before Portal, Raven, and Komf are
+recreated.
 
 `startWardenServer.mjs` exposes `/health` before `warden.init()` completes, but the payload now carries `ready`,
 `startedAt`, optional `initializedAt`, and any fatal init error. Sage and Moon use that distinction to tolerate normal
@@ -72,14 +73,17 @@ cold-start races without treating the process as fully ready too early.
 ## Managed Kavita During Boot
 
 - Boot and install flows treat `noona-kavita` specially.
-- Warden injects `NOONA_BOOTSTRAP_ADMIN_ON_START=true` as a managed default for `noona-kavita`.
-  Treat that flag as Warden-owned even if service-config round-trips include it; blank or unchanged values are a
-  no-op, not a user-editable toggle.
-- After managed Kavita starts, Warden can provision or recover its API key and inject that into dependent services such
-  as Portal and Komf.
+- Warden injects `NOONA_BOOTSTRAP_ADMIN_ON_START=false` and keeps managed Kavita open for local first-admin setup during
+  the install hand-off.
+- After managed Kavita starts, Warden should not try to register admins, log into Kavita, or auto-create/recover API
+  keys for Portal, Raven, or Komf.
+- Warden should instead keep `noona-kavita` installed, block the dependent services with a manual-hand-off error, and
+  wait for Moon/Sage to save a real admin API key before later retries.
 - During restore boot, Warden prefers validated existing keys first:
-  recovered Portal or Komf container keys become provisioning candidates, but Warden does not write them back into
-  runtime env until Kavita accepts them through `api/plugin/authenticate`.
+  recovered Portal, Raven, or Komf container keys become provisioning candidates, but Warden does not write them back
+  into runtime env until Kavita accepts them through `api/plugin/authenticate`.
+- If that managed key sync still fails after Kavita is healthy, Warden should keep `noona-kavita` marked as installed
+  and skip or block the dependent services instead of relabeling Kavita startup itself as the failure.
 - `noona-komf` explicitly depends on `noona-kavita` when managed Kavita is selected so Komf does not start before its
   validated managed key exists.
 

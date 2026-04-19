@@ -97,12 +97,15 @@
 
 ## Lifecycle Rules
 
-- Minimal mode is only `noona-sage` and `noona-moon`.
-- Full lifecycle always includes the required core data services: `noona-mongo`, `noona-redis`, and `noona-vault`.
+- Core boot and minimal recovery mode are the same fixed set:
+  `noona-mongo`, `noona-redis`, `noona-vault`, `noona-sage`, and `noona-moon`.
+- Full lifecycle always includes that core boot set before any optional selected services start.
 - Docker health is the readiness contract for managed Mongo and Redis.
   Warden should not need direct HTTP probes into the private data network just to decide whether boot can continue.
 - Use `orderServicesForLifecycle`, `resolveInstallOrder`, and the dependency graph instead of adding ad hoc startup
   sorting.
+- Managed Kavita sync failures after `noona-kavita` is healthy should block Portal, Raven, or Komf instead of
+  relabeling `noona-kavita` itself as failed.
 - Factory reset is intentionally destructive and must clear persisted boot state, not just stop containers.
 
 ## Test Map

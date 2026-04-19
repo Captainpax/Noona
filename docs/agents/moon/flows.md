@@ -22,11 +22,18 @@
 - The install request is intentionally snapshot-driven.
   After validation and persistence, Moon calls `/api/noona/install` with an empty selection body and then monitors the
   async progress stream.
+- Managed Kavita key-sync failures during install are now a distinct recovery state.
+  If Warden reports that Kavita is healthy but Portal, Raven, or Komf still need a validated shared API key, the
+  install tab should keep showing progress plus the Kavita hand-off popup instead of claiming `noona-kavita` itself
+  failed.
+- That recovery state is now manual-only.
+  Moon should tell the admin to open Kavita, create the first admin manually if needed, create or copy an
+  admin-capable API key, paste it into the popup, and then let Moon resume the remaining install work automatically.
 
 ## Summary, Discord Test, And Final Setup Completion
 
 - `openSetupSummary()` in the wizard does three critical things before navigation:
-  provision the managed Kavita service key when needed, save Discord OAuth config with retries, and persist the latest
+  save Discord OAuth config with retries and persist the latest
   setup snapshot.
 - Once install is already complete, those live Kavita or Discord sync calls downgrade to one-shot summary warnings.
   Snapshot persistence still blocks, but post-install sync failures no longer strand the user on the install tab.
@@ -69,6 +76,9 @@
   `kavita`, `komf`, and `users`.
 - The settings page handles ecosystem actions, service updates, service config edits, user management, Vault views,
   and download tuning through Moon API routes that forward into Sage.
+- `Admin -> Integrations -> Kavita` also carries the post-setup managed key-sync recovery surface.
+  That card can retry the automatic sync path or accept a pasted admin-capable Kavita API key, then refresh Portal,
+  Raven, and Komf config after Sage confirms the key.
 - Discord settings now save three user-facing handoff values together: the onboarding template, onboarding channel id,
   and the public invite URL the signed-in home page support button uses.
   That same card can also send the current rendered preview to Discord without persisting the draft first.

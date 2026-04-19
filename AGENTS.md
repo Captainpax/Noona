@@ -45,3 +45,10 @@ Read this before editing Noona.
   or [scripts/run-warden.sh](scripts/run-warden.sh) on bash-compatible shells.
 - The Warden bootstrap scripts accept overrides for network, container name, image, debug mode, Docker socket path,
   port, and `NOONA_DATA_ROOT` through script arguments or environment variables.
+- For local JS service work, use the service-level package scripts instead of inventing ad hoc commands:
+  `npm run dev` / `npm test` in `services/warden`, `services/portal`, and `services/moon`;
+  `npm start` / `npm test` in `services/sage`;
+  `npm test` in `services/vault`;
+  and `npm run commands:list` in `services/portal` to inspect the registered Discord slash commands.
+- Raven and Komf both ship Gradle wrappers in `services/raven` and `services/komf`; prefer the checked-in wrapper for
+  local `test` or build tasks there.

@@ -36,6 +36,13 @@ workflows, and the browser-side experience for recommendations and subscriptions
 - Mongo, Redis, and Vault stay implicit in Moon's public setup wizard.
   The wizard should describe their storage footprint and always-on role without turning them into normal public
   selection toggles.
+- Managed Kavita key recovery is now part of Moon's setup and settings surface.
+  When Kavita is healthy but dependent services still need a validated API key, Moon should stay task-based and surface
+  the recovery actions as a popup hand-off on the install tab or under `Admin -> Integrations -> Kavita` instead of
+  relabeling Kavita itself as failed.
+- Managed setup no longer auto-bootstraps Kavita admins or auth keys.
+  Moon should guide the admin to open Kavita, finish the first admin manually if needed, paste back a real
+  admin-capable API key, and then resume the remaining install work automatically.
 - Setup completion drives the page gates.
   The wizard pages stay accessible only while setup is incomplete, and the main app routes redirect back to the wizard
   until setup is marked complete.
@@ -89,3 +96,5 @@ workflows, and the browser-side experience for recommendations and subscriptions
   update [api-and-proxy-boundaries.md](api-and-proxy-boundaries.md).
 - If setup profile, auth pages, AppShell gating, or reboot monitor state changes, update
   [setup-auth-and-ui-state.md](setup-auth-and-ui-state.md).
+- If setup-step or settings-step managed Kavita recovery UX changes, update
+  [flows.md](flows.md) and [setup-auth-and-ui-state.md](setup-auth-and-ui-state.md).

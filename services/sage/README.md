@@ -29,10 +29,11 @@ Raven-facing browser actions.
 - talks to Vault through the stack's trusted internal HTTPS path in managed installs
 - keeps wizard-state on a local fallback until Warden has created the managed Vault CA bundle, then resumes Vault-backed
   persistence
-- keeps managed Kavita API-key provisioning running during that same Vault TLS warm-up window, even if Sage must defer
-  mirroring the stored service-account snapshot into Vault-backed settings
-- reuses the managed Kavita API key that Warden already injected into Portal or Komf when the setup summary only needs
-  to sync dependent services after install, instead of forcing a second Kavita admin login
+- validates manually supplied managed Kavita API keys, mirrors them into Portal, Raven, and Komf, and persists that
+  mirrored key through the Vault-backed settings path when available
+- reports a manual Kavita hand-off status back to Moon instead of trying to register, log into, or auto-create Kavita
+  auth keys during setup
+- flips managed Kavita back to `NOONA_SOCIAL_LOGIN_ONLY=true` after Moon accepts a validated admin API key
 - handles VPN settings writes, including PIA credential checks, save-first rotate requests, and immediate-apply
   decisions for Raven when connection-affecting VPN settings changed or when a saved disable should disconnect a live
   or still-rotating tunnel
@@ -48,6 +49,7 @@ Raven-facing browser actions.
 ## When An Admin Needs To Care
 
 - when Moon setup or Discord login fails
+- when Moon reports that managed Kavita is waiting for a manual admin-capable API key
 - when Discord bot validation succeeds but Moon reports duplicate slash commands or a likely guild-registration mismatch
 - when user management or default permissions behave unexpectedly
 - when Moon's signed-in background track fails to load or respond to range requests

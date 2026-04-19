@@ -7,23 +7,19 @@
 - [entrypoint.sh](../../../services/kavita/entrypoint.sh) ensures `/kavita/config` exists before launching the app.
 - On first boot, the entrypoint copies `/tmp/config/appsettings.json` into `/kavita/config/appsettings.json` only when
   the live config file is missing.
-- Warden now injects `NOONA_BOOTSTRAP_ADMIN_ON_START=true` by default for managed `noona-kavita`.
-- If `NOONA_BOOTSTRAP_ADMIN_ON_START` is truthy and
-  [noona-bootstrap-admin.sh](../../../services/kavita/noona-bootstrap-admin.sh) is present, the entrypoint sources the
-  helper and starts the bootstrap flow before `exec ./Kavita`.
+- During the install hand-off, managed Kavita should start with local first-admin setup available.
+- After Moon accepts a valid admin API key, Sage/Warden flip `NOONA_SOCIAL_LOGIN_ONLY=true` again and restart Kavita.
 
-## Managed First-Admin Bootstrap
+## Managed First-Admin Hand-Off
 
-- The bootstrap helper is optional and best-effort. It should not take down Kavita startup.
-- It only runs when all three admin values are present:
-  `KAVITA_ADMIN_USERNAME`, `KAVITA_ADMIN_EMAIL`, and `KAVITA_ADMIN_PASSWORD`.
-- The helper waits for `http://127.0.0.1:5000/api/health` before making any account calls.
-- It first tries `POST /api/Account/register`.
-- If register fails, it falls back to `POST /api/Account/login` and treats a successful login as "admin already
-  exists."
-- The whole bootstrap runs in the background, logs compact status lines, and exits quietly on timeout or partial config.
-- When Noona login is configured, direct first-user registration is blocked unless the request matches the configured
-  managed bootstrap admin credentials exactly.
+- Moon now tells the admin to open Kavita directly, create the first admin manually if needed, create an
+  admin-capable API key, and paste that key back into Moon.
+- Kavita's own wrapper should stay out of that process.
+  It should not auto-register admins, auto-log in, auto-create auth keys, or log one-time recovery keys during setup.
+- When Noona login is configured but `NOONA_SOCIAL_LOGIN_ONLY=false`, Kavita should still allow the local first-admin
+  form during the manual hand-off.
+- Once `NOONA_SOCIAL_LOGIN_ONLY=true` again, direct first-user registration is blocked unless the request matches the
+  configured managed bootstrap admin credentials exactly.
 
 ## Noona Login Button And Redirect
 

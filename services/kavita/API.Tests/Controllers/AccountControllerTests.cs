@@ -41,6 +41,7 @@ public class AccountControllerTests(ITestOutputHelper outputHelper) : AbstractDb
             using var _ = new EnvironmentVariableScope(new Dictionary<string, string?>
             {
                 ["NOONA_MOON_BASE_URL"] = "https://moon.example.com",
+                ["NOONA_SOCIAL_LOGIN_ONLY"] = "true",
                 ["KAVITA_ADMIN_USERNAME"] = "reader-admin",
                 ["KAVITA_ADMIN_EMAIL"] = "reader-admin@example.com",
                 ["KAVITA_ADMIN_PASSWORD"] = "Password123!",
@@ -75,6 +76,7 @@ public class AccountControllerTests(ITestOutputHelper outputHelper) : AbstractDb
             using var _ = new EnvironmentVariableScope(new Dictionary<string, string?>
             {
                 ["NOONA_MOON_BASE_URL"] = "https://moon.example.com",
+                ["NOONA_SOCIAL_LOGIN_ONLY"] = "true",
                 ["KAVITA_ADMIN_USERNAME"] = "reader-admin",
                 ["KAVITA_ADMIN_EMAIL"] = "reader-admin@example.com",
                 ["KAVITA_ADMIN_PASSWORD"] = "Password123!",
@@ -114,6 +116,7 @@ public class AccountControllerTests(ITestOutputHelper outputHelper) : AbstractDb
             using var _ = new EnvironmentVariableScope(new Dictionary<string, string?>
             {
                 ["NOONA_MOON_BASE_URL"] = null,
+                ["NOONA_SOCIAL_LOGIN_ONLY"] = null,
                 ["KAVITA_ADMIN_USERNAME"] = null,
                 ["KAVITA_ADMIN_EMAIL"] = null,
                 ["KAVITA_ADMIN_PASSWORD"] = null,
@@ -137,6 +140,46 @@ public class AccountControllerTests(ITestOutputHelper outputHelper) : AbstractDb
             var admins = await userManager.GetUsersInRoleAsync(PolicyConstants.AdminRole);
             Assert.Single(admins);
             Assert.Equal("plain-admin", admins[0].UserName);
+        }
+        finally
+        {
+            EnvLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task RegisterFirstUser_AllowsManualRegistration_WhenNoonaLoginConfiguredButSocialLoginOnlyDisabled()
+    {
+        await EnvLock.WaitAsync();
+        try
+        {
+            using var _ = new EnvironmentVariableScope(new Dictionary<string, string?>
+            {
+                ["NOONA_MOON_BASE_URL"] = "https://moon.example.com",
+                ["NOONA_SOCIAL_LOGIN_ONLY"] = "false",
+                ["KAVITA_ADMIN_USERNAME"] = null,
+                ["KAVITA_ADMIN_EMAIL"] = null,
+                ["KAVITA_ADMIN_PASSWORD"] = null,
+            });
+
+            var (controller, userManager, _) = await CreateControllerAsync();
+
+            var result = await controller.RegisterFirstUser(new RegisterDto
+            {
+                Username = "Pax-kun",
+                Email = "pax@example.com",
+                Password = "Password123!",
+            });
+
+            var payload = Assert.IsType<UserDto>(result.Value);
+            Assert.Equal("Pax-kun", payload.Username);
+            Assert.Equal("pax@example.com", payload.Email);
+            Assert.Equal("jwt-token", payload.Token);
+            Assert.Equal("refresh-token", payload.RefreshToken);
+
+            var admins = await userManager.GetUsersInRoleAsync(PolicyConstants.AdminRole);
+            Assert.Single(admins);
+            Assert.Equal("Pax-kun", admins[0].UserName);
         }
         finally
         {

@@ -80,6 +80,12 @@ control-plane HTTP API for the stack.
 
 - Managed Kavita provisioning uses Sage's client:
   [../../../services/sage/clients/managedKavitaSetupClient.mjs](../../../services/sage/clients/managedKavitaSetupClient.mjs)
+- Managed Kavita health and key sync are separate concerns now.
+  Warden can keep `noona-kavita` installed while Portal, Raven, or Komf remain blocked until the shared key sync
+  succeeds, and Raven is part of that managed target set.
+- During setup, Warden should let managed Kavita start with local first-admin setup available.
+  Once Moon and Sage accept a manual admin API key, Warden should treat the dependent services as unblocked and let
+  Kavita run again with `NOONA_SOCIAL_LOGIN_ONLY=true`.
 - Moon and Sage depend on Warden's setup snapshot and config routes.
 - Managed Moon, Vault, Portal, Raven, Kavita, and Komf now also depend on Warden's self-config route during startup,
   but only for their own runtime env restore.
@@ -94,4 +100,6 @@ control-plane HTTP API for the stack.
 - If route auth changes, check both `startWardenServer.mjs` and `requestAuth.mjs`.
 - If setup or runtime persistence changes, update [setup-profile-and-persistence.md](setup-profile-and-persistence.md).
 - If Docker network placement or Vault trust wiring changes,
+  update [boot-and-restore-flows.md](boot-and-restore-flows.md).
+- If managed Kavita dependent targets or blocked-service semantics change,
   update [boot-and-restore-flows.md](boot-and-restore-flows.md).

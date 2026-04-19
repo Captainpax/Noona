@@ -10,6 +10,14 @@ export const DEFAULT_MANAGED_KAVITA_SERVICE_ACCOUNT = Object.freeze({
     username: 'noona-system',
     email: 'noona-system@noona.local',
 })
+export const MANAGED_KAVITA_STAGE_READY = 'ready'
+export const MANAGED_KAVITA_STAGE_BOOTSTRAP_PENDING = 'bootstrap-pending'
+export const MANAGED_KAVITA_STAGE_BOOTSTRAP_ACCOUNT_REQUIRED = 'bootstrap-account-required'
+export const MANAGED_KAVITA_STAGE_API_KEY_REQUIRED = 'api-key-required'
+export const MANAGED_KAVITA_BOOTSTRAP_ACCOUNT_REQUIRED_MESSAGE =
+    'Managed Kavita rejected the configured bootstrap account while social-login-only mode is enabled. Re-check the bootstrap username, email, and password.'
+export const MANAGED_KAVITA_API_KEY_REQUIRED_MESSAGE =
+    'Managed Kavita already has an admin account, but Noona could not reuse a valid API key while social-login-only mode is enabled. Sign in through Noona and paste an admin-capable API key.'
 
 const normalizeString = (value) => {
     if (typeof value !== 'string') {
@@ -42,6 +50,48 @@ const buildHttpError = (message, status, details = null) => {
     error.details = details
     return error
 }
+
+const normalizeBoolean = (value) => {
+    if (typeof value === 'boolean') {
+        return value
+    }
+
+    if (typeof value === 'number') {
+        return value > 0
+    }
+
+    const normalized = normalizeString(value).toLowerCase()
+    return ['1', 'true', 'yes', 'on'].includes(normalized)
+}
+
+const withManagedKavitaState = (error, {stage = '', adminExists = null} = {}) => {
+    if (!error || typeof error !== 'object') {
+        return error
+    }
+
+    if (stage) {
+        error.stage = stage
+    }
+
+    if (typeof adminExists === 'boolean') {
+        error.adminExists = adminExists
+    }
+
+    return error
+}
+
+const createManagedKavitaStateError = (
+    message,
+    {
+        status = 409,
+        details = null,
+        stage = '',
+        adminExists = null,
+    } = {},
+) => withManagedKavitaState(buildHttpError(message, status, details), {
+    stage,
+    adminExists,
+})
 
 const createManagedServicePassword = (randomBytes = crypto.randomBytes) =>
     randomBytes(24).toString('base64url')
@@ -245,6 +295,25 @@ export const createManagedKavitaSetupClient = ({
         })
     }
 
+    const adminExists = async () => {
+        const payload = await request('/api/admin/exists', {method: 'GET'})
+        if (typeof payload === 'boolean') {
+            return payload
+        }
+
+        if (payload && typeof payload === 'object') {
+            if (typeof payload.exists === 'boolean') {
+                return payload.exists
+            }
+
+            if (typeof payload.adminExists === 'boolean') {
+                return payload.adminExists
+            }
+        }
+
+        return false
+    }
+
     const validateApiKey = async ({
                                       apiKey,
                                       pluginName = DEFAULT_MANAGED_KAVITA_PLUGIN_NAME,
@@ -398,6 +467,7 @@ export const createManagedKavitaSetupClient = ({
                                            candidateApiKeys = [],
                                            keyLength = 32,
                                            pluginName = DEFAULT_MANAGED_KAVITA_PLUGIN_NAME,
+                                           socialLoginOnly = false,
                                        } = {}) => {
         const attemptedKeys = new Set()
         const tryCandidateKeys = async (candidates = []) => {
@@ -424,6 +494,8 @@ export const createManagedKavitaSetupClient = ({
                     apiKey: candidate.key,
                     authKey: candidate.name ? {key: candidate.key, name: candidate.name} : null,
                     mode: candidate.source || 'existing',
+                    stage: MANAGED_KAVITA_STAGE_READY,
+                    adminExists: true,
                     user: authenticatedUser,
                 }
             }
@@ -432,7 +504,6 @@ export const createManagedKavitaSetupClient = ({
         }
 
         let normalizedAccount = normalizeManagedAccount(account)
-        let generatedAccount = false
         const reusableCandidate = await tryCandidateKeys(candidateApiKeys)
         if (reusableCandidate) {
             return {
@@ -441,27 +512,118 @@ export const createManagedKavitaSetupClient = ({
                 authKey: reusableCandidate.authKey,
                 authKeys: [],
                 mode: reusableCandidate.mode,
+                stage: MANAGED_KAVITA_STAGE_READY,
+                adminExists: true,
                 user: reusableCandidate.user,
             }
         }
 
-        if (!normalizedAccount && allowRegister) {
-            normalizedAccount = createManagedKavitaServiceAccount({randomBytes})
-            generatedAccount = true
-        }
-
         if (!normalizedAccount) {
-            throw new SetupValidationError('Managed Kavita setup needs account credentials or registration enabled.')
+            throw new SetupValidationError(
+                'Managed Kavita setup needs the configured bootstrap account or a valid admin-capable API key.',
+            )
         }
 
         let user = null
         let mode = 'login'
         let authKeys = []
+        const socialLoginOnlyEnabled = normalizeBoolean(socialLoginOnly)
 
-        if (allowRegister && generatedAccount) {
-            const acquired = await acquireFirstAdminSession(normalizedAccount)
-            user = acquired.user
-            mode = acquired.mode
+        if (socialLoginOnlyEnabled) {
+            const initialAdminExists = await adminExists()
+
+            if (initialAdminExists) {
+                throw createManagedKavitaStateError(MANAGED_KAVITA_API_KEY_REQUIRED_MESSAGE, {
+                    status: 409,
+                    stage: MANAGED_KAVITA_STAGE_API_KEY_REQUIRED,
+                    adminExists: true,
+                })
+            }
+
+            if (!allowRegister) {
+                throw createManagedKavitaStateError(
+                    'Managed Kavita needs the configured bootstrap account before Noona can create the first admin while social-login-only mode is enabled.',
+                    {
+                        status: 409,
+                        stage: MANAGED_KAVITA_STAGE_BOOTSTRAP_ACCOUNT_REQUIRED,
+                        adminExists: false,
+                    },
+                )
+            }
+
+            let lastRegisterError = null
+            for (let attempt = 1; attempt <= 20; attempt += 1) {
+                try {
+                    user = await registerFirstAdmin(normalizedAccount)
+                    mode = 'register'
+                    break
+                } catch (error) {
+                    lastRegisterError = error
+                    const registerStatus = Number(error?.status)
+
+                    if (registerStatus === 403) {
+                        throw createManagedKavitaStateError(MANAGED_KAVITA_BOOTSTRAP_ACCOUNT_REQUIRED_MESSAGE, {
+                            status: registerStatus,
+                            details: error?.details ?? null,
+                            stage: MANAGED_KAVITA_STAGE_BOOTSTRAP_ACCOUNT_REQUIRED,
+                            adminExists: false,
+                        })
+                    }
+
+                    if (!isRetryableRegisterStatus(registerStatus)) {
+                        let bootstrapErrorMessage = normalizeString(error?.message)
+                        if (!bootstrapErrorMessage) {
+                            bootstrapErrorMessage = 'Managed Kavita could not complete the managed first-admin bootstrap.'
+                        }
+
+                        if (Number.isInteger(registerStatus) && registerStatus >= 400 && registerStatus < 500) {
+                            bootstrapErrorMessage = MANAGED_KAVITA_BOOTSTRAP_ACCOUNT_REQUIRED_MESSAGE
+                        }
+
+                        const bootstrapStateError = createManagedKavitaStateError(
+                            bootstrapErrorMessage,
+                            {
+                                status: registerStatus || 409,
+                                details: error?.details ?? null,
+                                stage: MANAGED_KAVITA_STAGE_BOOTSTRAP_ACCOUNT_REQUIRED,
+                                adminExists: false,
+                            },
+                        )
+                        throw bootstrapStateError
+                    }
+
+                    const adminExistsAfterFailure = await adminExists()
+                    if (adminExistsAfterFailure) {
+                        throw createManagedKavitaStateError(MANAGED_KAVITA_API_KEY_REQUIRED_MESSAGE, {
+                            status: 409,
+                            details: error?.details ?? null,
+                            stage: MANAGED_KAVITA_STAGE_API_KEY_REQUIRED,
+                            adminExists: true,
+                        })
+                    }
+
+                    logger?.warn?.(
+                        `[${serviceName}] Managed Kavita first-user registration is still settling for ${normalizedAccount.username}; retrying register-only flow (${attempt}/20).`,
+                    )
+
+                    if (attempt < 20) {
+                        await sleep(1500)
+                    }
+                }
+            }
+
+            if (!user) {
+                throw createManagedKavitaStateError(
+                    normalizeString(lastRegisterError?.message)
+                    || 'Managed Kavita could not complete the managed first-admin bootstrap.',
+                    {
+                        status: Number(lastRegisterError?.status) || 409,
+                        details: lastRegisterError?.details ?? null,
+                        stage: MANAGED_KAVITA_STAGE_BOOTSTRAP_ACCOUNT_REQUIRED,
+                        adminExists: false,
+                    },
+                )
+            }
         } else if (allowRegister) {
             try {
                 user = await login(normalizedAccount)
@@ -525,7 +687,7 @@ export const createManagedKavitaSetupClient = ({
 
         apiKey = null
 
-        if (!apiKey && mode === 'register') {
+        if (!apiKey && mode === 'register' && !socialLoginOnlyEnabled) {
             try {
                 user = await login(normalizedAccount)
                 token = normalizeString(user?.token) || token
@@ -610,6 +772,17 @@ export const createManagedKavitaSetupClient = ({
         }
 
         if (!apiKey) {
+            if (socialLoginOnlyEnabled) {
+                throw createManagedKavitaStateError(
+                    'Managed Kavita created the first admin, but Noona could not create or validate the shared API key automatically. Sign in through Noona and paste an admin-capable API key.',
+                    {
+                        status: 409,
+                        stage: MANAGED_KAVITA_STAGE_API_KEY_REQUIRED,
+                        adminExists: true,
+                    },
+                )
+            }
+
             throw new Error('Kavita did not return an API key for the managed service account.')
         }
 
@@ -619,11 +792,14 @@ export const createManagedKavitaSetupClient = ({
             authKey,
             authKeys,
             mode,
+            stage: MANAGED_KAVITA_STAGE_READY,
+            adminExists: true,
             user,
         }
     }
 
     return {
+        adminExists,
         getBaseUrl: () => normalizedBaseUrl,
         registerFirstAdmin,
         login,

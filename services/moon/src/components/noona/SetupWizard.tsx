@@ -16,6 +16,14 @@ import {
     getDiscordGuildGateMismatch,
 } from "./discordGuildSelection.mjs";
 import {executeSetupActionPreparation, SETUP_ACTION_INSTALL, SETUP_ACTION_SUMMARY,} from "./setupActionPreparation.mjs";
+import {
+    MANAGED_KAVITA_RECOVERY_STAGE_API_KEY_REQUIRED,
+    MANAGED_KAVITA_RECOVERY_STAGE_READY,
+    mergeManagedKavitaRecoveryState,
+    normalizeManagedKavitaRecoveryPayload,
+    resolveManagedKavitaRecoveryStateFromInstall,
+    shouldPollManagedKavitaRecoveryStatus,
+} from "./managedKavitaRecovery.mjs";
 import {clearSetupSummarySession, writeSetupSummarySession,} from "./setupSummarySession.mjs";
 import styles from "./SetupWizard.module.scss";
 import editorStyles from "./ConfigEditor.module.scss";
@@ -28,6 +36,7 @@ type EnvConfigField = {
     warning?: string | null;
     required?: boolean;
     readOnly?: boolean;
+    advanced?: boolean;
 };
 
 type ServiceCatalogEntry = {
@@ -172,16 +181,30 @@ type ManagedKavitaAccount = {
 type ManagedKavitaServiceKeyResponse = {
     apiKey?: string | null;
     baseUrl?: string | null;
+    hostServiceUrl?: string | null;
     mode?: string | null;
     account?: ManagedKavitaAccount | null;
     services?: string[] | null;
+    adminExists?: boolean | null;
+    stage?: string | null;
     updatedServices?: Array<{
         name?: string | null;
         baseUrl?: string | null;
         apiKeyField?: string | null;
         restarted?: boolean | null;
     }> | null;
+    manualFallbackRequired?: boolean;
     error?: string;
+};
+
+type ManagedKavitaRecoveryState = {
+    stage: string;
+    error: string;
+    services: string[];
+    adminExists: boolean | null;
+    baseUrl: string;
+    hostServiceUrl: string;
+    manualFallbackRequired: boolean;
 };
 
 type IntegrationMode = "managed" | "external";
@@ -226,9 +249,8 @@ const DERIVED_KEYS = new Set([
     "KAVITA_LIBRARY_ROOT",
     "KAVITA_CONFIG_HOST_MOUNT_PATH",
     "KAVITA_LIBRARY_HOST_MOUNT_PATH",
-    "KAVITA_ADMIN_USERNAME",
-    "KAVITA_ADMIN_EMAIL",
-    "KAVITA_ADMIN_PASSWORD",
+    "NOONA_BOOTSTRAP_ADMIN_ON_START",
+    "NOONA_SOCIAL_LOGIN_ONLY",
     "KOMF_KAVITA_BASE_URI",
     "KOMF_KAVITA_API_KEY",
     "KOMF_BASE_URL",
@@ -265,6 +287,7 @@ const BG_NEUTRAL_ALPHA_WEAK = "neutral-alpha-weak" as const;
 const BG_DANGER_ALPHA_WEAK = "danger-alpha-weak" as const;
 const BG_BRAND_ALPHA_WEAK = "brand-alpha-weak" as const;
 const BG_SUCCESS_ALPHA_WEAK = "success-alpha-weak" as const;
+const BG_WARNING_ALPHA_WEAK = "warning-alpha-weak" as const;
 
 const SETUP_TABS: Array<{ id: SetupTabId; label: string; description: string }> = [
     {
@@ -668,9 +691,6 @@ const buildDerivedValues = ({
                                 kavitaMode,
                                 kavitaBaseUrl,
                                 kavitaApiKey,
-                                kavitaAdminUsername,
-                                kavitaAdminEmail,
-                                kavitaAdminPassword,
                                 kavitaSharedLibraryPath,
                                 komfMode,
                                 komfBaseUrl,
@@ -680,9 +700,6 @@ const buildDerivedValues = ({
     kavitaMode: IntegrationMode;
     kavitaBaseUrl: string;
     kavitaApiKey: string;
-    kavitaAdminUsername: string;
-    kavitaAdminEmail: string;
-    kavitaAdminPassword: string;
     kavitaSharedLibraryPath: string;
     komfMode: IntegrationMode;
     komfBaseUrl: string;
@@ -693,9 +710,6 @@ const buildDerivedValues = ({
         kavitaMode,
         kavitaBaseUrl,
         kavitaApiKey,
-        kavitaAdminUsername,
-        kavitaAdminEmail,
-        kavitaAdminPassword,
         kavitaSharedLibraryPath,
         komfMode,
         komfBaseUrl,
@@ -709,10 +723,6 @@ const validateSelection = ({
                                storageRoot,
                                kavitaMode,
                                komfMode,
-                               kavitaApiKey,
-                               kavitaAccount,
-                               kavitaAdminPasswordConfirm,
-                               managedKavitaTargets,
                            }: {
     selected: Set<string>;
     values: Record<string, Record<string, string>>;
@@ -720,10 +730,6 @@ const validateSelection = ({
     storageRoot: string;
     kavitaMode: IntegrationMode;
     komfMode: IntegrationMode;
-    kavitaApiKey: string;
-    kavitaAccount: ManagedKavitaAccount;
-    kavitaAdminPasswordConfirm: string;
-    managedKavitaTargets: string[];
 }): { ok: true } | { ok: false; message: string; missing: MissingRequiredField[] } => {
     const missing: MissingRequiredField[] = [];
     const unknownServices: string[] = [];
@@ -756,37 +762,6 @@ const validateSelection = ({
             if (!normalizeString(current[field.key]).trim()) {
                 missing.push({service: serviceName, key: field.key});
             }
-        }
-    }
-
-    if (
-        kavitaMode === "managed"
-        && managedKavitaTargets.length > 0
-        && !normalizeString(kavitaApiKey).trim()
-    ) {
-        const username = normalizeString(kavitaAccount.username).trim();
-        const email = normalizeString(kavitaAccount.email).trim();
-        const password = normalizeString(kavitaAccount.password).trim();
-        const confirmPassword = normalizeString(kavitaAdminPasswordConfirm).trim();
-
-        if (!username) {
-            missing.push({service: "noona-kavita", key: "KAVITA_ADMIN_USERNAME"});
-        }
-        if (!email) {
-            missing.push({service: "noona-kavita", key: "KAVITA_ADMIN_EMAIL"});
-        }
-        if (!password) {
-            missing.push({service: "noona-kavita", key: "KAVITA_ADMIN_PASSWORD"});
-        }
-        if (password && !confirmPassword) {
-            missing.push({service: "noona-kavita", key: "KAVITA_ADMIN_PASSWORD_CONFIRM"});
-        }
-        if (password && confirmPassword && password !== confirmPassword) {
-            return {
-                ok: false,
-                message: "Managed Kavita admin passwords do not match.",
-                missing: [...missing, {service: "noona-kavita", key: "KAVITA_ADMIN_PASSWORD_CONFIRM"}],
-            };
         }
     }
 
@@ -825,10 +800,6 @@ export function SetupWizard() {
     const [kavitaMode, setKavitaMode] = useState<IntegrationMode>("managed");
     const [kavitaBaseUrl, setKavitaBaseUrl] = useState("http://noona-kavita:5000");
     const [kavitaApiKey, setKavitaApiKey] = useState("");
-    const [kavitaAdminUsername, setKavitaAdminUsername] = useState("");
-    const [kavitaAdminEmail, setKavitaAdminEmail] = useState("");
-    const [kavitaAdminPassword, setKavitaAdminPassword] = useState("");
-    const [kavitaAdminPasswordConfirm, setKavitaAdminPasswordConfirm] = useState("");
     const [kavitaSharedLibraryPath, setKavitaSharedLibraryPath] = useState("");
     const [kavitaContainerName, setKavitaContainerName] = useState("");
 
@@ -852,9 +823,18 @@ export function SetupWizard() {
     const [installError, setInstallError] = useState<string | null>(null);
     const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null);
     const [installResult, setInstallResult] = useState<InstallResponse | null>(null);
+    const [managedKavitaRecovery, setManagedKavitaRecovery] = useState<ManagedKavitaRecoveryState | null>(null);
+    const [managedKavitaRecoveryApiKey, setManagedKavitaRecoveryApiKey] = useState("");
+    const [managedKavitaRecoverySaving, setManagedKavitaRecoverySaving] = useState(false);
+    const [managedKavitaRecoveryMessage, setManagedKavitaRecoveryMessage] = useState<string | null>(null);
+    const [managedKavitaRecoveryError, setManagedKavitaRecoveryError] = useState<string | null>(null);
+    const [managedKavitaRecoveryModalOpen, setManagedKavitaRecoveryModalOpen] = useState(false);
+    const [managedKavitaRecoveryDismissed, setManagedKavitaRecoveryDismissed] = useState(false);
+    const [managedKavitaResumeInstallPending, setManagedKavitaResumeInstallPending] = useState(false);
     const [debugEnabled, setDebugEnabled] = useState(false);
 
     const pollRef = useRef<number | null>(null);
+    const managedKavitaStatusPollRef = useRef<number | null>(null);
     const installRequestRef = useRef<AbortController | null>(null);
     const installProgressTimeoutRef = useRef<number | null>(null);
     const installTargetsRef = useRef<Set<string>>(new Set());
@@ -908,7 +888,7 @@ export function SetupWizard() {
         return next;
     }, [effectiveSelected, selected, servicesByName]);
 
-    const managedKavitaServiceTargets = useMemo(() => {
+    const managedKavitaServiceTargets = useMemo<string[]>(() => {
         if (kavitaMode !== "managed") return [];
 
         const targets: string[] = [];
@@ -917,28 +897,26 @@ export function SetupWizard() {
         if (komfMode === "managed" && effectiveSelected.has("noona-komf")) targets.push("noona-komf");
         return targets;
     }, [effectiveSelected, kavitaMode, komfMode]);
-    const kavitaAdminPasswordConfirmError = useMemo(() => {
-        if (
-            kavitaMode !== "managed"
-            || managedKavitaServiceTargets.length === 0
-            || normalizeString(kavitaApiKey).trim()
-        ) {
-            return undefined;
+    const managedKavitaOpenUrl = useMemo(
+        () =>
+            normalizeString(managedKavitaRecovery?.hostServiceUrl).trim()
+            || normalizeString(servicesByName.get("noona-kavita")?.hostServiceUrl).trim()
+            || normalizeString(kavitaBaseUrl).trim(),
+        [kavitaBaseUrl, managedKavitaRecovery, servicesByName],
+    );
+    useEffect(() => {
+        if (kavitaMode === "managed" && managedKavitaServiceTargets.length > 0) {
+            return;
         }
 
-        const password = normalizeString(kavitaAdminPassword).trim();
-        const confirmPassword = normalizeString(kavitaAdminPasswordConfirm).trim();
-        if (!password && !confirmPassword) {
-            return undefined;
-        }
-        if (password && !confirmPassword) {
-            return "Confirm the Kavita admin password.";
-        }
-        if (password && confirmPassword && password !== confirmPassword) {
-            return "Passwords do not match.";
-        }
-        return undefined;
-    }, [kavitaMode, managedKavitaServiceTargets, kavitaApiKey, kavitaAdminPassword, kavitaAdminPasswordConfirm]);
+        setManagedKavitaRecovery(null);
+        setManagedKavitaRecoveryApiKey("");
+        setManagedKavitaRecoveryMessage(null);
+        setManagedKavitaRecoveryError(null);
+        setManagedKavitaRecoveryModalOpen(false);
+        setManagedKavitaRecoveryDismissed(false);
+        setManagedKavitaResumeInstallPending(false);
+    }, [kavitaMode, managedKavitaServiceTargets]);
 
     const effectiveValues = useMemo(
         () => buildDerivedValues({
@@ -947,9 +925,6 @@ export function SetupWizard() {
             kavitaMode,
             kavitaBaseUrl,
             kavitaApiKey,
-            kavitaAdminUsername,
-            kavitaAdminEmail,
-            kavitaAdminPassword,
             kavitaSharedLibraryPath,
             komfMode,
             komfBaseUrl,
@@ -960,9 +935,6 @@ export function SetupWizard() {
             kavitaMode,
             kavitaBaseUrl,
             kavitaApiKey,
-            kavitaAdminUsername,
-            kavitaAdminEmail,
-            kavitaAdminPassword,
             kavitaSharedLibraryPath,
             komfMode,
             komfBaseUrl,
@@ -993,14 +965,6 @@ export function SetupWizard() {
             storageRoot,
             kavitaMode,
             komfMode,
-            kavitaApiKey,
-            kavitaAccount: {
-                username: kavitaAdminUsername,
-                email: kavitaAdminEmail,
-                password: kavitaAdminPassword,
-            },
-            kavitaAdminPasswordConfirm,
-            managedKavitaTargets: managedKavitaServiceTargets,
         });
         return result.ok ? [] : result.missing;
     }, [
@@ -1010,12 +974,6 @@ export function SetupWizard() {
         storageRoot,
         kavitaMode,
         komfMode,
-        kavitaApiKey,
-        kavitaAdminUsername,
-        kavitaAdminEmail,
-        kavitaAdminPassword,
-        kavitaAdminPasswordConfirm,
-        managedKavitaServiceTargets,
     ]);
     const showSetupDebugDetails = shouldShowSetupDebugDetails(debugEnabled);
     const discordSetupReady = useMemo(() => {
@@ -1113,11 +1071,80 @@ export function SetupWizard() {
         }
     };
 
+    const stopManagedKavitaStatusPolling = () => {
+        if (managedKavitaStatusPollRef.current != null) {
+            window.clearInterval(managedKavitaStatusPollRef.current);
+            managedKavitaStatusPollRef.current = null;
+        }
+    };
+
     const stopLogPolling = () => {
         if (logPollRef.current != null) {
             window.clearInterval(logPollRef.current);
             logPollRef.current = null;
         }
+    };
+
+    const applyManagedKavitaRecovery = (nextState: ManagedKavitaRecoveryState | null) => {
+        if (!nextState || nextState.stage === MANAGED_KAVITA_RECOVERY_STAGE_READY) {
+            setManagedKavitaRecovery(null);
+            setManagedKavitaRecoveryApiKey("");
+            setManagedKavitaRecoveryError(null);
+            setManagedKavitaRecoveryMessage(null);
+            setManagedKavitaRecoveryModalOpen(false);
+            setManagedKavitaRecoveryDismissed(false);
+            return;
+        }
+
+        setManagedKavitaRecovery((prev) => mergeManagedKavitaRecoveryState(prev, nextState));
+        setManagedKavitaRecoveryError((prev) => prev ?? nextState.error ?? null);
+        setManagedKavitaRecoveryMessage(null);
+    };
+
+    useEffect(() => {
+        if (!managedKavitaRecovery) {
+            return;
+        }
+
+        if (!managedKavitaRecoveryDismissed) {
+            setManagedKavitaRecoveryModalOpen(true);
+        }
+    }, [managedKavitaRecovery, managedKavitaRecoveryDismissed]);
+
+    useEffect(() => {
+        if (!managedKavitaResumeInstallPending) {
+            return;
+        }
+
+        setManagedKavitaResumeInstallPending(false);
+        void retryInstallAfterManagedKavitaRecovery();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [managedKavitaResumeInstallPending]);
+
+    const fetchManagedKavitaRecoveryStatus = async () => {
+        if (kavitaMode !== "managed" || managedKavitaServiceTargets.length === 0) {
+            applyManagedKavitaRecovery(null);
+            return null;
+        }
+
+        const params = new URLSearchParams();
+        for (const serviceName of managedKavitaServiceTargets) {
+            params.append("services", serviceName);
+        }
+
+        const response = await fetch(`/api/noona/setup/kavita/service-key?${params.toString()}`, {
+            cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as ManagedKavitaServiceKeyResponse | null;
+        if (!response.ok && !payload) {
+            throw new Error(`Failed to load managed Kavita recovery status (HTTP ${response.status}).`);
+        }
+
+        const nextState = normalizeManagedKavitaRecoveryPayload(payload, {
+            fallbackServices: managedKavitaServiceTargets,
+        });
+        applyManagedKavitaRecovery(nextState);
+        return nextState;
     };
 
     const pollLogs = async () => {
@@ -1158,6 +1185,12 @@ export function SetupWizard() {
             }
 
             setInstallProgress(payload);
+            applyManagedKavitaRecovery(
+                resolveManagedKavitaRecoveryStateFromInstall(
+                    {items: payload.items},
+                    {fallbackServices: managedKavitaServiceTargets},
+                ),
+            );
 
             if (sessionActive && installProgressStartedRef.current && isFinished) {
                 stopPolling();
@@ -1195,6 +1228,38 @@ export function SetupWizard() {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab]);
+
+    useEffect(() => {
+        stopManagedKavitaStatusPolling();
+
+        const shouldPoll =
+            activeTab === "install"
+            && shouldPollManagedKavitaRecoveryStatus({
+                kavitaMode,
+                managedTargetServices: managedKavitaServiceTargets,
+                items: installProgress?.items ?? [],
+            });
+
+        if (!shouldPoll) {
+            return () => {
+                stopManagedKavitaStatusPolling();
+            };
+        }
+
+        void fetchManagedKavitaRecoveryStatus().catch(() => {
+            // Keep using install progress if the status probe is transiently unavailable.
+        });
+        managedKavitaStatusPollRef.current = window.setInterval(() => {
+            void fetchManagedKavitaRecoveryStatus().catch(() => {
+                // Keep polling through transient failures.
+            });
+        }, 2000);
+
+        return () => {
+            stopManagedKavitaStatusPolling();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, installProgress, kavitaMode, managedKavitaServiceTargets]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1287,10 +1352,6 @@ export function SetupWizard() {
                     setKavitaMode(hydrated.kavitaMode as IntegrationMode);
                     setKavitaBaseUrl(hydrated.kavitaBaseUrl);
                     setKavitaApiKey(hydrated.kavitaApiKey);
-                    setKavitaAdminUsername(hydrated.kavitaAdminUsername);
-                    setKavitaAdminEmail(hydrated.kavitaAdminEmail);
-                    setKavitaAdminPassword(hydrated.kavitaAdminPassword);
-                    setKavitaAdminPasswordConfirm(hydrated.kavitaAdminPasswordConfirm);
                     setKavitaSharedLibraryPath(hydrated.kavitaSharedLibraryPath);
                     setKomfMode(hydrated.komfMode as IntegrationMode);
                     setKomfBaseUrl(hydrated.komfBaseUrl);
@@ -1456,9 +1517,6 @@ export function SetupWizard() {
             kavitaMode,
             kavitaBaseUrl: resolvedKavitaBaseUrl,
             kavitaApiKey: resolvedKavitaApiKey,
-            kavitaAdminUsername,
-            kavitaAdminEmail,
-            kavitaAdminPassword,
             kavitaSharedLibraryPath,
             komfMode,
             komfBaseUrl,
@@ -1469,9 +1527,6 @@ export function SetupWizard() {
             kavitaMode,
             kavitaBaseUrl: resolvedKavitaBaseUrl,
             kavitaApiKey: resolvedKavitaApiKey,
-            kavitaAdminUsername,
-            kavitaAdminEmail,
-            kavitaAdminPassword,
             kavitaSharedLibraryPath,
             komfMode,
             komfBaseUrl,
@@ -1590,10 +1645,6 @@ export function SetupWizard() {
             setKavitaMode(hydrated.kavitaMode as IntegrationMode);
             setKavitaBaseUrl(hydrated.kavitaBaseUrl);
             setKavitaApiKey(hydrated.kavitaApiKey);
-            setKavitaAdminUsername(hydrated.kavitaAdminUsername);
-            setKavitaAdminEmail(hydrated.kavitaAdminEmail);
-            setKavitaAdminPassword(hydrated.kavitaAdminPassword);
-            setKavitaAdminPasswordConfirm(hydrated.kavitaAdminPasswordConfirm);
             setKavitaSharedLibraryPath(hydrated.kavitaSharedLibraryPath);
             setKomfMode(hydrated.komfMode as IntegrationMode);
             setKomfBaseUrl(hydrated.komfBaseUrl);
@@ -1643,7 +1694,45 @@ export function SetupWizard() {
         throw new Error(lastError || "Unable to save Discord OAuth config.");
     };
 
-    const provisionManagedKavitaServiceKey = async () => {
+    const applyManagedKavitaManualSetupState = ({
+                                                    apiKey,
+                                                    baseUrl,
+                                                    hostServiceUrl,
+                                                }: {
+        apiKey?: string | null;
+        baseUrl?: string | null;
+        hostServiceUrl?: string | null;
+    }) => {
+        const nextApiKey = normalizeString(apiKey).trim();
+        const nextBaseUrl =
+            normalizeString(baseUrl).trim()
+            || normalizeString(hostServiceUrl).trim()
+            || normalizeString(kavitaBaseUrl).trim();
+
+        if (nextBaseUrl) {
+            setKavitaBaseUrl(nextBaseUrl);
+        }
+        if (nextApiKey) {
+            setKavitaApiKey(nextApiKey);
+        }
+
+        setValues((prev) =>
+            applyDerivedEnvState({
+                ...prev,
+                "noona-kavita": {
+                    ...(prev["noona-kavita"] ?? {}),
+                    NOONA_BOOTSTRAP_ADMIN_ON_START: "false",
+                    NOONA_SOCIAL_LOGIN_ONLY: nextApiKey ? "true" : (prev["noona-kavita"]?.NOONA_SOCIAL_LOGIN_ONLY ?? "false"),
+                },
+            }),
+        );
+    };
+
+    const provisionManagedKavitaServiceKey = async ({
+                                                        apiKey = null,
+                                                    }: {
+        apiKey?: string | null;
+    } = {}) => {
         if (kavitaMode !== "managed" || managedKavitaServiceTargets.length === 0) {
             return {
                 apiKey: normalizeString(kavitaApiKey).trim(),
@@ -1651,22 +1740,20 @@ export function SetupWizard() {
             };
         }
 
-        const account = {
-            username: normalizeString(kavitaAdminUsername).trim(),
-            email: normalizeString(kavitaAdminEmail).trim(),
-            password: normalizeString(kavitaAdminPassword).trim(),
-        };
-        const hasAccount = Boolean(account.username || account.email || account.password);
         const response = await fetch("/api/noona/setup/kavita/service-key", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
                 services: managedKavitaServiceTargets,
-                ...(hasAccount ? {account} : {}),
+                ...(normalizeString(apiKey).trim() ? {apiKey: normalizeString(apiKey).trim()} : {}),
             }),
         });
         const payload = (await response.json().catch(() => null)) as ManagedKavitaServiceKeyResponse | null;
+        const recoveryState = normalizeManagedKavitaRecoveryPayload(payload, {
+            fallbackServices: managedKavitaServiceTargets,
+        });
         if (!response.ok) {
+            applyManagedKavitaRecovery(recoveryState);
             throw new Error(
                 normalizeString(payload?.error).trim()
                 || `Managed Kavita key provisioning failed (HTTP ${response.status}).`,
@@ -1676,29 +1763,68 @@ export function SetupWizard() {
         const nextApiKey = normalizeString(payload?.apiKey).trim();
         const nextBaseUrl = normalizeString(payload?.baseUrl).trim();
 
-        if (nextBaseUrl) {
-            setKavitaBaseUrl(nextBaseUrl);
-        }
-        if (nextApiKey) {
-            setKavitaApiKey(nextApiKey);
-        }
-
-        const nextAccount = payload?.account;
-        if (nextAccount) {
-            const username = normalizeString(nextAccount.username).trim();
-            const email = normalizeString(nextAccount.email).trim();
-            if (username) {
-                setKavitaAdminUsername(username);
-            }
-            if (email) {
-                setKavitaAdminEmail(email);
-            }
-        }
+        applyManagedKavitaManualSetupState({
+            apiKey: nextApiKey,
+            baseUrl: nextBaseUrl,
+            hostServiceUrl: normalizeString(payload?.hostServiceUrl).trim(),
+        });
+        setManagedKavitaRecoveryError(null);
+        setManagedKavitaRecoveryMessage(null);
+        applyManagedKavitaRecovery(recoveryState);
 
         return {
             apiKey: nextApiKey || normalizeString(kavitaApiKey).trim(),
             baseUrl: nextBaseUrl || normalizeString(kavitaBaseUrl).trim(),
         };
+    };
+
+    const saveManagedKavitaRecoveryApiKey = async () => {
+        if (managedKavitaRecovery?.stage !== MANAGED_KAVITA_RECOVERY_STAGE_API_KEY_REQUIRED) {
+            return;
+        }
+
+        const apiKey = normalizeString(managedKavitaRecoveryApiKey).trim();
+        if (!apiKey) {
+            setManagedKavitaRecoveryError("Paste an admin-capable Kavita API key before saving.");
+            setManagedKavitaRecoveryMessage(null);
+            return;
+        }
+
+        setManagedKavitaRecoverySaving(true);
+        setManagedKavitaRecoveryError(null);
+        setManagedKavitaRecoveryMessage(null);
+        try {
+            await provisionManagedKavitaServiceKey({apiKey});
+            setManagedKavitaRecoveryApiKey("");
+            setManagedKavitaRecoveryMessage("Saved the Kavita API key. Moon is finishing the remaining install steps...");
+            setManagedKavitaRecoveryModalOpen(false);
+            setManagedKavitaRecoveryDismissed(false);
+            setManagedKavitaResumeInstallPending(true);
+        } catch (error) {
+            setManagedKavitaRecoveryError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setManagedKavitaRecoverySaving(false);
+        }
+    };
+
+    const retryInstallAfterManagedKavitaRecovery = async () => {
+        setManagedKavitaRecoveryMessage(null);
+        setManagedKavitaRecoveryError(null);
+        await install();
+    };
+
+    const dismissManagedKavitaRecoveryModal = () => {
+        setManagedKavitaRecoveryModalOpen(false);
+        setManagedKavitaRecoveryDismissed(true);
+    };
+
+    const openManagedKavitaHandOff = () => {
+        const url = normalizeString(managedKavitaOpenUrl).trim();
+        if (!url) {
+            return;
+        }
+
+        window.open(url, "_blank", "noopener,noreferrer");
     };
 
     const openSetupSummary = async ({allowPreparationWarnings = false}: {
@@ -1745,14 +1871,6 @@ export function SetupWizard() {
             storageRoot,
             kavitaMode,
             komfMode,
-            kavitaApiKey,
-            kavitaAccount: {
-                username: kavitaAdminUsername,
-                email: kavitaAdminEmail,
-                password: kavitaAdminPassword,
-            },
-            kavitaAdminPasswordConfirm,
-            managedKavitaTargets: managedKavitaServiceTargets,
         });
         if (!validation.ok) {
             setInstallError(validation.message);
@@ -1761,6 +1879,11 @@ export function SetupWizard() {
         }
 
         setInstallError(null);
+        setManagedKavitaRecovery(null);
+        setManagedKavitaRecoveryError(null);
+        setManagedKavitaRecoveryMessage(null);
+        setManagedKavitaRecoveryModalOpen(false);
+        setManagedKavitaRecoveryDismissed(false);
         setInstallSavingSnapshot(true);
         clearSetupSummarySession();
 
@@ -1839,6 +1962,12 @@ export function SetupWizard() {
 
             const responseEntries = Array.isArray(json?.results) ? json.results : [];
             setInstallResult({...json, results: responseEntries});
+            applyManagedKavitaRecovery(
+                resolveManagedKavitaRecoveryStateFromInstall(
+                    {results: responseEntries},
+                    {fallbackServices: managedKavitaServiceTargets},
+                ),
+            );
 
             const responseProgress = json?.progress;
             if (responseProgress && Array.isArray(responseProgress.items)) {
@@ -1850,6 +1979,12 @@ export function SetupWizard() {
                     clearInstallProgressTimeout();
                 }
                 setInstallProgress(responseProgress);
+                applyManagedKavitaRecovery(
+                    resolveManagedKavitaRecoveryStateFromInstall(
+                        {items: responseProgress.items},
+                        {fallbackServices: managedKavitaServiceTargets},
+                    ),
+                );
             }
 
             void pollProgress();
@@ -1895,6 +2030,7 @@ export function SetupWizard() {
             }
             if (showAdvanced) return true;
             if (DERIVED_KEYS.has(field.key)) return false;
+            if (field.advanced === true) return false;
             return !ADVANCED_KEYS.has(field.key);
         });
 
@@ -2367,56 +2503,14 @@ export function SetupWizard() {
                                         <Column gap="12">
                                             <Text onBackground="neutral-weak" variant="body-default-xs">Warden will
                                                 install `captainpax/noona-kavita:latest`, mount a config folder under
-                                                the Noona root, share Raven downloads into `/manga`, and pass the
-                                                initial admin credentials into the managed container on first
-                                                boot.</Text>
+                                                the Noona root, and share Raven downloads into `/manga` for the
+                                                managed library.</Text>
                                             <Text onBackground="neutral-weak" variant="body-default-xs">
-                                                Noona will then create or reuse a managed Kavita auth key after install
-                                                and wire it into Portal, Raven, and Komf automatically.
+                                                After Kavita is healthy, Moon will prompt you to open Kavita, create
+                                                the first admin manually if needed, copy an admin-capable API key, and
+                                                paste it back into setup so Noona can finish wiring Portal, Raven, and
+                                                Komf.
                                             </Text>
-                                            <Column gap="8">
-                                                <Text onBackground="neutral-strong" variant="label-default-s">
-                                                    First admin account
-                                                </Text>
-                                                <Text onBackground="neutral-weak" variant="body-default-xs">
-                                                    These credentials are passed to the managed `noona-kavita`
-                                                    container so it can create the first Kavita admin account, and Noona
-                                                    also reuses them to provision the managed API key.
-                                                </Text>
-                                                <Input
-                                                    id="managed-kavita-admin-username"
-                                                    name="managed-kavita-admin-username"
-                                                    type="text"
-                                                    value={kavitaAdminUsername}
-                                                    placeholder="Kavita admin username"
-                                                    onChange={(event) => setKavitaAdminUsername(event.target.value)}
-                                                />
-                                                <Input
-                                                    id="managed-kavita-admin-email"
-                                                    name="managed-kavita-admin-email"
-                                                    type="email"
-                                                    value={kavitaAdminEmail}
-                                                    placeholder="admin@example.com"
-                                                    onChange={(event) => setKavitaAdminEmail(event.target.value)}
-                                                />
-                                                <Input
-                                                    id="managed-kavita-admin-password"
-                                                    name="managed-kavita-admin-password"
-                                                    type="password"
-                                                    value={kavitaAdminPassword}
-                                                    placeholder="Kavita admin password"
-                                                    onChange={(event) => setKavitaAdminPassword(event.target.value)}
-                                                />
-                                                <Input
-                                                    id="managed-kavita-admin-password-confirm"
-                                                    name="managed-kavita-admin-password-confirm"
-                                                    type="password"
-                                                    value={kavitaAdminPasswordConfirm}
-                                                    placeholder="Confirm Kavita admin password"
-                                                    errorMessage={kavitaAdminPasswordConfirmError}
-                                                    onChange={(event) => setKavitaAdminPasswordConfirm(event.target.value)}
-                                                />
-                                            </Column>
                                             {normalizeString(kavitaApiKey).trim() && (
                                                 <Badge background={BG_SUCCESS_ALPHA_WEAK} onBackground="neutral-strong">
                                                     Managed Kavita API key ready
@@ -2758,6 +2852,38 @@ export function SetupWizard() {
                                         </Text>
                                     )}
                                     {installError && <Text onBackground="danger-strong">{installError}</Text>}
+                                    {managedKavitaRecovery && !managedKavitaRecoveryModalOpen && (
+                                        <Card
+                                            fillWidth
+                                            background={BG_SURFACE}
+                                            border="warning-alpha-weak"
+                                            padding="s"
+                                            radius="l"
+                                        >
+                                            <Row horizontal="between" vertical="center" gap="12"
+                                                 style={{flexWrap: "wrap"}}>
+                                                <Column gap="4" style={{minWidth: 0}}>
+                                                    <Text variant="label-default-s">Kavita setup needs one more
+                                                        step</Text>
+                                                    <Text onBackground="neutral-weak" variant="body-default-xs"
+                                                          wrap="balance">
+                                                        Open the Kavita hand-off popup, finish the admin/API-key step,
+                                                        and Moon will resume the remaining install work automatically.
+                                                    </Text>
+                                                </Column>
+                                                <Button
+                                                    size="s"
+                                                    variant="primary"
+                                                    onClick={() => {
+                                                        setManagedKavitaRecoveryDismissed(false);
+                                                        setManagedKavitaRecoveryModalOpen(true);
+                                                    }}
+                                                >
+                                                    Finish Kavita setup
+                                                </Button>
+                                            </Row>
+                                        </Card>
+                                    )}
                                     {installProgress && (
                                         <Column gap="8">
                                             <Row horizontal="between" vertical="center">
@@ -2863,6 +2989,128 @@ export function SetupWizard() {
                         </>
                     )}
                 </Column>
+
+                {managedKavitaRecovery && managedKavitaRecoveryModalOpen && (
+                    <div className={styles.summaryOverlay} role="presentation">
+                        <Card
+                            background={BG_SURFACE}
+                            border="warning-alpha-weak"
+                            padding="l"
+                            radius="l"
+                            className={styles.summaryModal}
+                        >
+                            <Column gap="16">
+                                <Row horizontal="between" vertical="center" gap="12" style={{flexWrap: "wrap"}}>
+                                    <Column gap="4" style={{minWidth: 0}}>
+                                        <Heading as="h2" variant="heading-strong-l">Finish Kavita setup</Heading>
+                                        <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
+                                            Moon paused the remaining install work until Kavita has an admin-capable API
+                                            key.
+                                        </Text>
+                                    </Column>
+                                    <Button
+                                        size="s"
+                                        variant="secondary"
+                                        onClick={() => dismissManagedKavitaRecoveryModal()}
+                                    >
+                                        Close
+                                    </Button>
+                                </Row>
+
+                                <Column gap="8">
+                                    <Text variant="label-default-s">
+                                        {managedKavitaRecovery.adminExists === false
+                                            ? "Step 1: create the first Kavita admin"
+                                            : "Step 1: sign in to Kavita as an admin"}
+                                    </Text>
+                                    <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
+                                        {managedKavitaRecovery.adminExists === false
+                                            ? "Open Kavita, finish the first-admin screen, then sign in with that admin account."
+                                            : "Open Kavita, sign in with an admin account, then open the account/auth-key area."}
+                                    </Text>
+                                    <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
+                                        Create a new API/auth key for that admin account, copy the raw key value, then
+                                        paste it back here. Moon will validate it, re-lock managed Kavita behind Noona
+                                        sign-in, and continue the remaining install work automatically.
+                                    </Text>
+                                </Column>
+
+                                <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    <Button
+                                        size="m"
+                                        variant="primary"
+                                        disabled={!normalizeString(managedKavitaOpenUrl).trim()}
+                                        onClick={() => openManagedKavitaHandOff()}
+                                    >
+                                        Open Kavita
+                                    </Button>
+                                    <Button
+                                        size="m"
+                                        variant="secondary"
+                                        disabled={managedKavitaRecoverySaving}
+                                        onClick={() => void fetchManagedKavitaRecoveryStatus()}
+                                    >
+                                        Refresh status
+                                    </Button>
+                                </Row>
+
+                                {normalizeString(managedKavitaOpenUrl).trim() && (
+                                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                                        Kavita URL: {normalizeString(managedKavitaOpenUrl).trim()}
+                                    </Text>
+                                )}
+
+                                <Input
+                                    id="setup-managed-kavita-api-key"
+                                    name="setup-managed-kavita-api-key"
+                                    label="Admin-capable Kavita API key"
+                                    type="password"
+                                    value={managedKavitaRecoveryApiKey}
+                                    disabled={managedKavitaRecoverySaving}
+                                    onChange={(event) => setManagedKavitaRecoveryApiKey(event.target.value)}
+                                />
+
+                                {managedKavitaRecoveryError && (
+                                    <Text onBackground="danger-strong" variant="body-default-xs">
+                                        {managedKavitaRecoveryError}
+                                    </Text>
+                                )}
+                                {managedKavitaRecoveryMessage && (
+                                    <Text onBackground="neutral-weak" variant="body-default-xs">
+                                        {managedKavitaRecoveryMessage}
+                                    </Text>
+                                )}
+                                {managedKavitaRecovery.error && !managedKavitaRecoveryError && (
+                                    <Text onBackground="neutral-weak" variant="body-default-xs" wrap="balance">
+                                        {managedKavitaRecovery.error}
+                                    </Text>
+                                )}
+
+                                <Row gap="8" style={{flexWrap: "wrap"}}>
+                                    <Button
+                                        size="m"
+                                        variant="primary"
+                                        disabled={
+                                            managedKavitaRecoverySaving
+                                            || !normalizeString(managedKavitaRecoveryApiKey).trim()
+                                        }
+                                        onClick={() => void saveManagedKavitaRecoveryApiKey()}
+                                    >
+                                        {managedKavitaRecoverySaving ? "Saving..." : "Save API key"}
+                                    </Button>
+                                    <Button
+                                        size="m"
+                                        variant="secondary"
+                                        disabled={managedKavitaRecoverySaving}
+                                        onClick={() => dismissManagedKavitaRecoveryModal()}
+                                    >
+                                        I’ll finish this later
+                                    </Button>
+                                </Row>
+                            </Column>
+                        </Card>
+                    </div>
+                )}
 
             </Column>
         </Column>

@@ -94,8 +94,7 @@ container settings by hand.
 If you upload an older Noona setup JSON file during setup, Moon now loads it into the wizard for review first. Confirm
 the storage path and any secrets, then use the explicit save or install actions to persist the updated profile.
 Saved setup JSON keeps `storageRoot` as top-level setup metadata.
-Masked secrets are still safe for setup save and download round-trips, but managed Kavita provisioning may ask you to
-re-enter the Kavita admin password before continuing when only the masked placeholder is available.
+Masked secrets are still safe for setup save and download round-trips.
 If you choose an external Komf instance during setup, Moon saves that URL in the setup profile and Warden derives
 Portal's `KOMF_BASE_URL` from it on save or restore.
 If you leave Komf managed by Noona, Portal keeps its default internal `http://noona-komf:8085` target instead of
@@ -103,10 +102,17 @@ persisting a custom override.
 Moon saves the setup snapshot before direct install so Warden can derive and apply the managed service plan from that
 persisted profile.
 Mongo, Redis, and Vault stay implicit in that public setup profile and are always included as part of the core stack.
-The managed Kavita plus Discord live preflight stays on the setup summary path, where those running services are
-available for browser-facing validation and handoff.
-When Portal or Komf already has the managed Kavita API key from install, Sage now reuses that installed key on the
-summary sync path instead of forcing a second Kavita admin login.
+If `noona-kavita` finishes booting but Portal, Raven, or Komf still need their shared Kavita API key, Moon now keeps
+Kavita marked as healthy and opens a manual hand-off popup instead of pretending Kavita itself failed.
+Use that popup to:
+
+1. Open Kavita.
+2. Create the first Kavita admin manually if this is a fresh install.
+3. Create or copy an admin-capable Kavita API key.
+4. Paste that key back into Moon.
+
+After Moon validates the key, it automatically syncs Portal, Raven, and Komf, flips managed Kavita back to
+`NOONA_SOCIAL_LOGIN_ONLY=true`, restarts Kavita, and resumes the remaining install work.
 If those live post-install sync calls fail after the stack is already installed, Moon now opens the summary anyway and
 shows one-shot warnings there instead of trapping you on the install tab.
 Warden derives the managed service storage wiring internally instead of persisting raw `NOONA_DATA_ROOT` overrides per
@@ -155,12 +161,12 @@ treating that as a fresh boot-screen case.
   Approved requests link back to the Moon request page, and the final recommendation ready message is only sent after
   the title is actually available in Noona with a direct Kavita title link, even if the download step finished earlier.
 - On the finish or summary step, use the Discord login flow to create the first Noona admin session.
-- Managed Kavita admin credentials are separate. If you provide Kavita admin defaults during setup, Warden can seed the
-  managed Kavita admin and API-key flow for you.
-- Managed Kavita no longer exposes Kavita's direct `/registration/register` first-admin page as a supported path.
-  If Kavita shows a managed setup wait message on `/login`, check the saved `KAVITA_ADMIN_USERNAME`,
-  `KAVITA_ADMIN_EMAIL`, and `KAVITA_ADMIN_PASSWORD` values in Moon and confirm `noona-kavita` finished booting in
-  Warden before asking readers to sign in.
+- Managed Kavita setup is now a manual hand-off.
+  During install, Kavita allows the first admin to be created locally so the admin can finish setup inside Kavita.
+- That local first-admin page stays available only during the hand-off window while `NOONA_SOCIAL_LOGIN_ONLY=false`.
+- Once Moon accepts a valid admin-capable Kavita API key, it syncs the dependent services and re-enables
+  `NOONA_SOCIAL_LOGIN_ONLY` on managed Kavita.
+- If you need to re-key later, use `Admin -> Integrations -> Kavita` in Moon.
 
 ## Signed-In Shell Music And Live Toasts
 
@@ -217,8 +223,8 @@ Warden migrates them into `wardenm/noona-settings.json` and removes the duplicat
 During first-run, before Warden has created `vault/tls/ca-cert.pem`, Sage's setup wizard state may temporarily stay on
 its local fallback cache instead of writing through Vault.
 Once Vault is installed and that CA file exists, wizard-state persistence resumes over the managed internal HTTPS path.
-Managed Kavita API key provisioning can still continue during this warm-up window, but Sage may defer mirroring the
-managed service-account snapshot into Vault-backed settings until Vault trust is ready.
+Managed Kavita API key sync can still continue during this warm-up window, but Sage may defer mirroring the saved key
+into Vault-backed settings until Vault trust is ready.
 Warden also keeps writing `warden/service-runtime-config.json` during that window, so managed runtime env changes can
 survive the warm-up even when the Vault-backed settings write has to wait.
 Other Vault-backed service traffic now stays HTTPS-only as well; packet clients use the managed CA bundle directly and
@@ -293,7 +299,8 @@ Also in Moon:
   When it is enabled, Portal posts grouped title updates every 15 minutes for newly finished Raven chapters.
 - That same Discord settings screen also carries the optional `DISCORD_SUPERUSER_ID` field for the private DM-only
   `downloadall` command.
-- `Admin -> Integrations -> Kavita` manages Kavita-related defaults and external link settings.
+- `Admin -> Integrations -> Kavita` manages Kavita-related defaults, external link settings, and managed API-key
+  recovery for Portal, Raven, and Komf.
 
 Use Moon's default-permissions controls if you want new Discord-linked users to start with a standard role set.
 
@@ -354,8 +361,8 @@ Downloads, Kavita, or metadata flows fail after a reboot:
 - if Moon stays in the normal app and only one selected service is unhealthy, troubleshoot that service directly; an
   unhealthy probe alone should not force `/bootScreen`
 - check service health and logs from Moon or Warden before changing settings by hand
-- if managed Kavita is enabled, expect Portal and Komf to reuse only validated Kavita plugin keys; stale recovered keys
-  will now be replaced during setup or restore instead of being silently reused
+- if Moon says managed Kavita is waiting on a manual API key, open Kavita, create or copy an admin-capable API key,
+  paste it into the install popup or `Admin -> Integrations -> Kavita`, then let Moon retry the remaining sync work
 - if Portal's Discord `/scan` command reports a denied Kavita scan, verify Portal's `KAVITA_API_KEY` belongs to an
   admin-capable Kavita account; a key that can list libraries is not always enough to queue admin-only scans
 - if Portal is configured to use an external Komf URL, metadata bridge errors should reference that external URL instead

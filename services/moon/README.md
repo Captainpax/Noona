@@ -23,8 +23,8 @@ recommendations, and the day-to-day admin UI.
   control-plane
   warm-up instead of failing on the first `502`
 - loads uploaded Noona setup JSON files into the wizard for review before admins explicitly save or install changes
-- keeps masked setup secrets safe for save or download round-trips, while live setup actions can still ask admins to
-  re-enter the managed Kavita password when only the masked placeholder is available
+- keeps masked setup secrets safe for save or download round-trips without turning the public setup flow into raw
+  descriptor editing
 - saves the setup snapshot before direct install so Warden can derive the managed service plan from persisted setup
   state
 - keeps completed installs in the normal app flow on healthy restarts because Warden now restores the core services
@@ -37,6 +37,9 @@ recommendations, and the day-to-day admin UI.
   flow instead of redirecting an already-started system back to `/bootScreen`
 - keeps the managed Kavita and Discord live preflight on the summary path, where the running services are available for
   browser-facing validation and handoff
+- treats managed Kavita install as a manual hand-off once `noona-kavita` is healthy
+- auto-opens a setup popup that tells admins to open Kavita, create the first admin manually if needed, create an
+  admin-capable API key, paste it back into Moon, and then lets Moon resume the remaining install work automatically
 - keeps Portal's `DISCORD_GUILD_ID` and `REQUIRED_GUILD_ID` aligned by default when admins pick or validate a Discord
   guild during setup or in signed-in settings, while warning when those values intentionally diverge
 - shows read-only Discord slash-command diagnostics during bot validation so admins can spot duplicate global or guild
@@ -56,6 +59,8 @@ recommendations, and the day-to-day admin UI.
 - provides the main settings and operations UI
 - lets admins keep Moon's published URL and optional Sage backend URL in sync from the service-links view when custom
   networking requires it
+- lets admins paste a validated admin-capable Kavita API key from `Admin -> Integrations -> Kavita`, then fans that
+  key out to Portal, Raven, and Komf while re-locking managed Kavita behind Noona sign-in
 - replaces the signed-in Home hero with a Noona dashboard welcome card that links readers to `Start Reading`,
   Discord support, and `My requests` without surfacing internal service names, and now opens `Start Reading`
   straight into Kavita instead of routing readers through the Noona handoff bridge
@@ -120,6 +125,7 @@ recommendations, and the day-to-day admin UI.
   decisions after they return to Moon
 - when Discord validation warns that Portal's guild gate differs from the selected command-registration guild or shows
   duplicate slash-command names
+- when the setup popup or `Admin -> Integrations -> Kavita` asks for a manual admin-capable Kavita API key
 - when troubleshooting setup, login, or UI-driven service actions
 - when the Downloader VPN card is waiting on a save-triggered apply, manual rotation, or login test to finish and the
   controls stay disabled until Raven reports a settled connection state
@@ -128,6 +134,10 @@ recommendations, and the day-to-day admin UI.
 
 Moon is the public face of the stack. Warden runs the services, Sage brokers browser-facing APIs, and Moon turns those
 capabilities into the supported admin workflow.
+For managed Kavita specifically, Moon now uses a direct manual hand-off:
+Kavita installs first with local first-admin setup available,
+Moon then asks the admin to finish Kavita setup in Kavita itself and paste back a real API key before Moon resumes the
+remaining managed install work.
 
 ## Next Steps
 

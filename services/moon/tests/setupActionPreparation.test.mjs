@@ -39,7 +39,7 @@ test("direct install saves the snapshot without running managed Kavita or Discor
     });
 });
 
-test("summary preparation provisions managed Kavita before saving the snapshot", async () => {
+test("summary preparation persists Discord auth and snapshot without auto-provisioning managed Kavita", async () => {
     const calls = [];
     let persistedOverrides = null;
 
@@ -66,18 +66,15 @@ test("summary preparation provisions managed Kavita before saving the snapshot",
         },
     });
 
-    assert.deepEqual(calls, ["kavita", "discord", "snapshot"]);
-    assert.deepEqual(result.managedKavita, {
-        apiKey: "managed-api-key",
-        baseUrl: "http://noona-kavita:5000",
-    });
+    assert.deepEqual(calls, ["discord", "snapshot"]);
+    assert.equal(result.managedKavita, null);
     assert.deepEqual(persistedOverrides, {
-        kavitaApiKey: "managed-api-key",
-        kavitaBaseUrl: "http://noona-kavita:5000",
+        kavitaApiKey: "",
+        kavitaBaseUrl: "",
     });
 });
 
-test("summary preparation still persists Discord auth config and falls back to current Kavita values when needed", async () => {
+test("summary preparation persists Discord auth config and preserves current Kavita values", async () => {
     const calls = [];
     let persistedOverrides = null;
 
@@ -104,7 +101,7 @@ test("summary preparation still persists Discord auth config and falls back to c
         },
     });
 
-    assert.deepEqual(calls, ["kavita", "discord", "snapshot"]);
+    assert.deepEqual(calls, ["discord", "snapshot"]);
     assert.deepEqual(persistedOverrides, {
         kavitaApiKey: "existing-api-key",
         kavitaBaseUrl: "http://existing-kavita:5000",
@@ -137,15 +134,12 @@ test("summary preparation persists the snapshot and returns warnings when post-i
         allowNonFatalWarnings: true,
     });
 
-    assert.deepEqual(calls, ["kavita", "discord", "snapshot"]);
+    assert.deepEqual(calls, ["discord", "snapshot"]);
     assert.deepEqual(persistedOverrides, {
         kavitaApiKey: "existing-api-key",
         kavitaBaseUrl: "http://existing-kavita:5000",
     });
-    assert.deepEqual(result.warnings, [
-        "Managed Kavita sync warning: Unable to provision the managed Kavita API key.",
-        "Discord sync warning: Discord OAuth config is not reachable yet.",
-    ]);
+    assert.deepEqual(result.warnings, ["Discord sync warning: Discord OAuth config is not reachable yet."]);
 });
 
 test("summary preparation still fails when snapshot persistence fails", async () => {

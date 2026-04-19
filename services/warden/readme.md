@@ -43,6 +43,11 @@ exposes the management APIs that the rest of Noona uses.
   still warming up during first boot
 - keeps service-config secrets redacted by default while still letting trusted Sage read broadly and a matching managed
   service read its own full config during startup restore
+- treats managed Kavita key sync as separate from `noona-kavita` container health, so Kavita can stay installed while
+  dependent services such as Portal, Raven, or Komf are reported as blocked or failed until an admin pastes a valid
+  Kavita API key into Moon
+- starts managed Kavita with local first-admin setup available during first-run install, then lets Sage flip
+  `NOONA_SOCIAL_LOGIN_ONLY=true` back on after Moon accepts a validated admin API key
 - coordinates updates, restarts, and factory-reset behavior
 - keeps a longer default API request timeout for synchronous managed image updates so Moon can wait through Docker pulls
   plus optional restarts
@@ -64,6 +69,7 @@ exposes the management APIs that the rest of Noona uses.
 
 - during the initial Docker + Warden install
 - when changing storage, update, or restart behavior
+- when managed Kavita is healthy but Portal, Raven, or Komf are still blocked on Moon's manual API-key hand-off
 - when Moon reports service-management or restore problems
 
 ## How It Fits Into Noona

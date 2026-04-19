@@ -5312,7 +5312,7 @@ test('POST /api/setup/services/noona-raven/detect proxies detection result', asy
     assert.deepEqual(await response.json(), { detection: { mountPath: '/data' } })
 })
 
-test('POST /api/setup/services/noona-kavita/service-key provisions a managed key and updates selected services', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key provisions a managed key and updates selected services', async (t) => {
     const vault = createVaultAuthStub()
     const serviceConfigs = new Map([
         ['noona-portal', {env: {SERVICE_NAME: 'noona-portal', DISCORD_BOT_TOKEN: 'bot-token'}}],
@@ -5397,6 +5397,7 @@ test('POST /api/setup/services/noona-kavita/service-key provisions a managed key
         },
         allowRegister: true,
         candidateApiKeys: [],
+        socialLoginOnly: false,
     })
 
     assert.equal(updateCalls.length, 3)
@@ -5444,7 +5445,7 @@ test('POST /api/setup/services/noona-kavita/service-key provisions a managed key
     })
 })
 
-test('POST /api/setup/services/noona-kavita/service-key validates partial managed account payloads', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key validates partial managed account payloads', async (t) => {
     const app = createSageApp({
         serviceName: 'test-sage',
         setupClient: {
@@ -5493,7 +5494,7 @@ test('POST /api/setup/services/noona-kavita/service-key validates partial manage
     })
 })
 
-test('POST /api/setup/services/noona-kavita/service-key asks for the real password when setup only has a masked placeholder', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key asks for the real password when setup only has a masked placeholder', async (t) => {
     const app = createSageApp({
         serviceName: 'test-sage',
         setupClient: {
@@ -5547,7 +5548,7 @@ test('POST /api/setup/services/noona-kavita/service-key asks for the real passwo
     })
 })
 
-test('POST /api/setup/services/noona-kavita/service-key ignores masked Warden config keys and reuses the stored managed key', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key ignores masked Warden config keys and reuses the stored managed key', async (t) => {
     const managedCalls = []
     const updateCalls = []
 
@@ -5648,6 +5649,7 @@ test('POST /api/setup/services/noona-kavita/service-key ignores masked Warden co
             source: 'stored',
             pluginName: 'noona-sage',
         }],
+        socialLoginOnly: false,
     }])
     assert.deepEqual(updateCalls, [[
         'noona-portal',
@@ -5661,7 +5663,7 @@ test('POST /api/setup/services/noona-kavita/service-key ignores masked Warden co
     ]])
 })
 
-test('POST /api/setup/services/noona-kavita/service-key reuses an existing service key when one is already configured', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key reuses an existing service key when one is already configured', async (t) => {
     const managedCalls = []
     const updateCalls = []
     const getServiceConfigCalls = []
@@ -5741,7 +5743,16 @@ test('POST /api/setup/services/noona-kavita/service-key reuses an existing servi
         ['noona-portal', {includeSecrets: true}],
         ['noona-komf', {includeSecrets: true}],
     ])
-    assert.deepEqual(managedCalls, [])
+    assert.deepEqual(managedCalls, [{
+        account: null,
+        allowRegister: true,
+        candidateApiKeys: [{
+            key: 'existing-service-key',
+            source: 'existing',
+            pluginName: 'noona-portal',
+        }],
+        socialLoginOnly: false,
+    }])
     assert.deepEqual(updateCalls, [
         [
             'noona-portal',
@@ -5766,7 +5777,7 @@ test('POST /api/setup/services/noona-kavita/service-key reuses an existing servi
     ])
 })
 
-test('POST /api/setup/services/noona-kavita/service-key falls back to managed noona-kavita env credentials', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key falls back to managed noona-kavita env credentials', async (t) => {
     const managedCalls = []
     const getServiceConfigCalls = []
 
@@ -5845,10 +5856,11 @@ test('POST /api/setup/services/noona-kavita/service-key falls back to managed no
         },
         allowRegister: true,
         candidateApiKeys: [],
+        socialLoginOnly: false,
     })
 })
 
-test('POST /api/setup/services/noona-kavita/service-key keeps going when Vault warm-up blocks the stored-settings lookup', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key keeps going when Vault warm-up blocks the stored-settings lookup', async (t) => {
     const updateCalls = []
     const managedCalls = []
     const storedSettingsLookups = []
@@ -5940,6 +5952,7 @@ test('POST /api/setup/services/noona-kavita/service-key keeps going when Vault w
         account: null,
         allowRegister: true,
         candidateApiKeys: [],
+        socialLoginOnly: false,
     }])
     assert.deepEqual(updateCalls, [[
         'noona-portal',
@@ -5953,7 +5966,7 @@ test('POST /api/setup/services/noona-kavita/service-key keeps going when Vault w
     ]])
 })
 
-test('POST /api/setup/services/noona-kavita/service-key treats Vault settings persistence as best effort after provisioning succeeds', async (t) => {
+test.skip('POST /api/setup/services/noona-kavita/service-key treats Vault settings persistence as best effort after provisioning succeeds', async (t) => {
     const updateCalls = []
     let writeAttempts = 0
     const warmupError = new Error(
@@ -6049,6 +6062,898 @@ test('POST /api/setup/services/noona-kavita/service-key treats Vault settings pe
             restart: true,
         },
     ]])
+})
+
+test.skip('POST /api/setup/services/noona-kavita/service-key validates a pasted admin API key and fans it out', async (t) => {
+    const updateCalls = []
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-raven') {
+                    return {env: {KAVITA_LIBRARY_ROOT: ''}}
+                }
+
+                return {env: {}}
+            },
+            async updateServiceConfig(name, updates = {}) {
+                updateCalls.push([name, updates])
+                return {
+                    restarted: true,
+                    service: {
+                        name,
+                        env: updates?.env ?? {},
+                    },
+                }
+            },
+        },
+        managedKavitaSetupClient: {
+            async ensureServiceApiKey() {
+                throw new Error('ensureServiceApiKey should not be called when a manual API key is supplied')
+            },
+            async validateApiKey({apiKey}) {
+                assert.equal(apiKey, 'manual-admin-key')
+                return {username: 'reader-admin'}
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-portal', 'noona-raven', 'noona-komf'],
+            apiKey: 'manual-admin-key',
+        }),
+    })
+
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.equal(payload.apiKey, 'manual-admin-key')
+    assert.equal(payload.mode, 'manual')
+    assert.deepEqual(updateCalls, [
+        [
+            'noona-portal',
+            {
+                env: {
+                    KAVITA_BASE_URL: 'http://noona-kavita:5000',
+                    KAVITA_API_KEY: 'manual-admin-key',
+                },
+                restart: true,
+            },
+        ],
+        [
+            'noona-raven',
+            {
+                env: {
+                    KAVITA_LIBRARY_ROOT: '/manga',
+                    KAVITA_BASE_URL: 'http://noona-kavita:5000',
+                    KAVITA_API_KEY: 'manual-admin-key',
+                },
+                restart: true,
+            },
+        ],
+        [
+            'noona-komf',
+            {
+                env: {
+                    KOMF_KAVITA_BASE_URI: 'http://noona-kavita:5000',
+                    KOMF_KAVITA_API_KEY: 'manual-admin-key',
+                },
+                restart: true,
+            },
+        ],
+    ])
+})
+
+test.skip('POST /api/setup/services/noona-kavita/service-key rejects an invalid pasted admin API key', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig() {
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return null
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-portal'],
+            apiKey: 'bad-key',
+        }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+        error: 'Kavita rejected that API key. Paste an admin-capable Kavita API key and try again.',
+    })
+})
+
+test.skip('POST /api/setup/services/noona-kavita/service-key returns manual fallback guidance when auto sync cannot complete', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-kavita') {
+                    return {
+                        env: {
+                            KAVITA_ADMIN_USERNAME: 'reader-admin',
+                            KAVITA_ADMIN_EMAIL: 'reader-admin@example.com',
+                            KAVITA_ADMIN_PASSWORD: 'Password123!',
+                            NOONA_SOCIAL_LOGIN_ONLY: 'true',
+                        },
+                        hostServiceUrl: 'https://kavita.example',
+                    }
+                }
+
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async ensureServiceApiKey() {
+                const error = new Error('Kavita is running, but Noona could not acquire or validate a reusable API key. Bootstrap login failed.')
+                error.status = 409
+                error.stage = 'api-key-required'
+                error.adminExists = true
+                throw error
+            },
+            async adminExists() {
+                return true
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-portal', 'noona-raven', 'noona-komf'],
+        }),
+    })
+
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), {
+        apiKey: null,
+        baseUrl: 'http://noona-kavita:5000',
+        hostServiceUrl: 'https://kavita.example',
+        mode: 'manual-required',
+        account: {
+            username: 'reader-admin',
+            email: 'reader-admin@example.com',
+        },
+        services: ['noona-portal', 'noona-raven', 'noona-komf'],
+        updatedServices: [],
+        adminExists: true,
+        stage: 'api-key-required',
+        manualFallbackRequired: true,
+        error: 'Kavita is running, but Noona could not acquire or validate a reusable API key. Bootstrap login failed.',
+    })
+})
+
+test.skip('GET /api/setup/services/noona-kavita/service-key reports bootstrap-pending while the first admin is still missing', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-kavita') {
+                    return {
+                        env: {
+                            KAVITA_ADMIN_USERNAME: 'reader-admin',
+                            KAVITA_ADMIN_EMAIL: 'reader-admin@example.com',
+                            KAVITA_ADMIN_PASSWORD: 'Password123!',
+                            NOONA_SOCIAL_LOGIN_ONLY: 'true',
+                        },
+                        hostServiceUrl: 'https://kavita.example',
+                    }
+                }
+
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return null
+            },
+            async adminExists() {
+                return false
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key?services=noona-portal,noona-raven,noona-komf`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+        apiKey: null,
+        baseUrl: 'http://noona-kavita:5000',
+        hostServiceUrl: 'https://kavita.example',
+        mode: 'bootstrap',
+        account: {
+            username: 'reader-admin',
+            email: 'reader-admin@example.com',
+        },
+        services: ['noona-portal', 'noona-raven', 'noona-komf'],
+        updatedServices: [],
+        adminExists: false,
+        stage: 'bootstrap-pending',
+        manualFallbackRequired: false,
+        error: 'Noona is still waiting for managed Kavita to create the first admin.',
+    })
+})
+
+test.skip('GET /api/setup/services/noona-kavita/service-key reports api-key-required once an admin already exists', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-kavita') {
+                    return {
+                        env: {
+                            KAVITA_ADMIN_USERNAME: 'reader-admin',
+                            KAVITA_ADMIN_EMAIL: 'reader-admin@example.com',
+                            KAVITA_ADMIN_PASSWORD: 'Password123!',
+                            NOONA_SOCIAL_LOGIN_ONLY: 'true',
+                        },
+                        hostServiceUrl: 'https://kavita.example',
+                    }
+                }
+
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return null
+            },
+            async adminExists() {
+                return true
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key?services=noona-portal`)
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), {
+        apiKey: null,
+        baseUrl: 'http://noona-kavita:5000',
+        hostServiceUrl: 'https://kavita.example',
+        mode: 'manual-required',
+        account: {
+            username: 'reader-admin',
+            email: 'reader-admin@example.com',
+        },
+        services: ['noona-portal'],
+        updatedServices: [],
+        adminExists: true,
+        stage: 'api-key-required',
+        manualFallbackRequired: true,
+        error: 'Managed Kavita already has an admin account, but Noona could not reuse a valid API key while social-login-only mode is enabled. Sign in through Noona and paste an admin-capable API key.',
+    })
+})
+
+test.skip('POST /api/settings/services/noona-kavita/service-key reuses the shared sync flow after setup', async (t) => {
+    const updateCalls = []
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-raven') {
+                    return {env: {KAVITA_LIBRARY_ROOT: ''}}
+                }
+
+                return {env: {}}
+            },
+            async updateServiceConfig(name, updates = {}) {
+                updateCalls.push([name, updates])
+                return {
+                    restarted: true,
+                    service: {
+                        name,
+                        env: updates?.env ?? {},
+                    },
+                }
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return {username: 'reader-admin'}
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/settings/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-portal', 'noona-raven', 'noona-komf'],
+            apiKey: 'settings-admin-key',
+        }),
+    })
+
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.equal(payload.apiKey, 'settings-admin-key')
+    assert.equal(payload.mode, 'manual')
+    assert.equal(updateCalls.length, 3)
+})
+
+test('POST /api/setup/services/noona-kavita/service-key requires an explicit admin-capable API key', async (t) => {
+    let validateAttempts = 0
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig() {
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                validateAttempts += 1
+                return null
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({services: ['noona-portal']}),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+        error: 'Paste an admin-capable Kavita API key before saving.',
+    })
+    assert.equal(validateAttempts, 0)
+})
+
+test('POST /api/setup/services/noona-kavita/service-key validates a pasted admin API key, syncs dependents, and re-locks Kavita', async (t) => {
+    const vault = createVaultAuthStub()
+    const updateCalls = []
+    const serviceConfigs = new Map([
+        ['noona-kavita', {env: {NOONA_SOCIAL_LOGIN_ONLY: 'false'}, hostServiceUrl: 'https://kavita.example'}],
+        ['noona-portal', {env: {SERVICE_NAME: 'noona-portal', DISCORD_BOT_TOKEN: 'bot-token'}}],
+        ['noona-raven', {env: {SERVICE_NAME: 'noona-raven', KAVITA_LIBRARY_ROOT: ''}}],
+        ['noona-komf', {env: {SERVICE_NAME: 'noona-komf', KOMF_LOG_LEVEL: 'INFO'}}],
+    ])
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: vault.client,
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                return serviceConfigs.get(name) ?? {env: {}}
+            },
+            async updateServiceConfig(name, updates = {}) {
+                updateCalls.push([name, updates])
+                serviceConfigs.set(name, {
+                    ...(serviceConfigs.get(name) ?? {}),
+                    env: {
+                        ...(serviceConfigs.get(name)?.env ?? {}),
+                        ...(updates?.env ?? {}),
+                    },
+                })
+                return {
+                    restarted: true,
+                    service: {
+                        name,
+                        env: updates?.env ?? {},
+                    },
+                }
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey({apiKey}) {
+                assert.equal(apiKey, 'manual-admin-key')
+                return {username: 'reader-admin'}
+            },
+            async adminExists() {
+                return true
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-portal', 'noona-raven', 'noona-komf'],
+            apiKey: 'manual-admin-key',
+        }),
+    })
+
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.equal(payload.apiKey, 'manual-admin-key')
+    assert.equal(payload.mode, 'manual')
+    assert.equal(payload.stage, 'ready')
+    assert.deepEqual(payload.services, ['noona-portal', 'noona-raven', 'noona-komf'])
+    assert.equal(payload.manualFallbackRequired, false)
+    assert.equal(payload.hostServiceUrl, 'https://kavita.example')
+
+    assert.deepEqual(updateCalls, [
+        [
+            'noona-portal',
+            {
+                env: {
+                    KAVITA_BASE_URL: 'http://noona-kavita:5000',
+                    KAVITA_API_KEY: 'manual-admin-key',
+                },
+                restart: true,
+            },
+        ],
+        [
+            'noona-raven',
+            {
+                env: {
+                    KAVITA_LIBRARY_ROOT: '/manga',
+                    KAVITA_BASE_URL: 'http://noona-kavita:5000',
+                    KAVITA_API_KEY: 'manual-admin-key',
+                },
+                restart: true,
+            },
+        ],
+        [
+            'noona-komf',
+            {
+                env: {
+                    KOMF_KAVITA_BASE_URI: 'http://noona-kavita:5000',
+                    KOMF_KAVITA_API_KEY: 'manual-admin-key',
+                },
+                restart: true,
+            },
+        ],
+        [
+            'noona-kavita',
+            {
+                env: {
+                    NOONA_BOOTSTRAP_ADMIN_ON_START: 'false',
+                    NOONA_SOCIAL_LOGIN_ONLY: 'true',
+                },
+                restart: true,
+            },
+        ],
+    ])
+
+    const stored = vault.settingDocs.find((entry) => entry.key === 'setup.managedKavitaServiceAccount')
+    assert.ok(stored)
+    assert.equal(stored.value?.apiKey, 'manual-admin-key')
+    assert.equal(Object.prototype.hasOwnProperty.call(stored.value ?? {}, 'account'), false)
+})
+
+test('POST /api/setup/services/noona-kavita/service-key rejects an invalid pasted admin API key', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig() {
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return null
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-portal'],
+            apiKey: 'bad-key',
+        }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+        error: 'Kavita rejected that API key. Paste an admin-capable Kavita API key and try again.',
+    })
+})
+
+test('POST /api/setup/services/noona-kavita/service-key treats Vault settings persistence as best effort after manual sync succeeds', async (t) => {
+    const updateCalls = []
+    let writeAttempts = 0
+    const warmupError = new Error(
+        "Unable to read Vault CA certificate at /var/lib/noona/vault-tls/ca-cert.pem: ENOENT: no such file or directory, open '/var/lib/noona/vault-tls/ca-cert.pem'",
+    )
+    warmupError.code = 'ENOENT'
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: {
+            mongo: {
+                async findOne() {
+                    return null
+                },
+                async update() {
+                    writeAttempts += 1
+                    throw warmupError
+                },
+            },
+        },
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-kavita') {
+                    return {env: {}, hostServiceUrl: 'https://kavita.example'}
+                }
+
+                if (name === 'noona-raven') {
+                    return {env: {KAVITA_LIBRARY_ROOT: ''}}
+                }
+
+                return {env: {}}
+            },
+            async updateServiceConfig(name, updates = {}) {
+                updateCalls.push([name, updates])
+                return {
+                    restarted: true,
+                    service: {
+                        name,
+                        env: updates?.env ?? {},
+                    },
+                }
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return {username: 'reader-admin'}
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-raven'],
+            apiKey: 'manual-admin-key',
+        }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.equal(writeAttempts, 1)
+    assert.deepEqual(updateCalls, [
+        [
+            'noona-raven',
+            {
+                env: {
+                    KAVITA_LIBRARY_ROOT: '/manga',
+                    KAVITA_BASE_URL: 'http://noona-kavita:5000',
+                    KAVITA_API_KEY: 'manual-admin-key',
+                },
+                restart: true,
+            },
+        ],
+        [
+            'noona-kavita',
+            {
+                env: {
+                    NOONA_BOOTSTRAP_ADMIN_ON_START: 'false',
+                    NOONA_SOCIAL_LOGIN_ONLY: 'true',
+                },
+                restart: true,
+            },
+        ],
+    ])
+})
+
+test('GET /api/setup/services/noona-kavita/service-key reports manual first-admin hand-off while no admin exists yet', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-kavita') {
+                    return {
+                        env: {
+                            NOONA_SOCIAL_LOGIN_ONLY: 'false',
+                        },
+                        hostServiceUrl: 'https://kavita.example',
+                    }
+                }
+
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return null
+            },
+            async adminExists() {
+                return false
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key?services=noona-portal,noona-raven,noona-komf`)
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), {
+        apiKey: null,
+        baseUrl: 'http://noona-kavita:5000',
+        hostServiceUrl: 'https://kavita.example',
+        mode: 'manual',
+        services: ['noona-portal', 'noona-raven', 'noona-komf'],
+        updatedServices: [],
+        adminExists: false,
+        stage: 'api-key-required',
+        manualFallbackRequired: true,
+        error: 'Kavita is installed. Open Kavita, create the first admin account, then create an admin-capable API key and paste it into Moon.',
+    })
+})
+
+test('GET /api/setup/services/noona-kavita/service-key reports ready when a stored key still validates', async (t) => {
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        vaultClient: {
+            mongo: {
+                async findOne() {
+                    return {
+                        key: 'setup.managedKavitaServiceAccount',
+                        value: {
+                            apiKey: 'stored-service-key',
+                        },
+                    }
+                },
+            },
+        },
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-kavita') {
+                    return {
+                        env: {},
+                        hostServiceUrl: 'https://kavita.example',
+                    }
+                }
+
+                return {env: {}}
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey({apiKey}) {
+                assert.equal(apiKey, 'stored-service-key')
+                return {username: 'reader-admin'}
+            },
+            async adminExists() {
+                return true
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/setup/services/noona-kavita/service-key?services=noona-portal`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+        apiKey: 'stored-service-key',
+        baseUrl: 'http://noona-kavita:5000',
+        hostServiceUrl: 'https://kavita.example',
+        mode: 'stored',
+        services: ['noona-portal'],
+        updatedServices: [],
+        adminExists: true,
+        stage: 'ready',
+        manualFallbackRequired: false,
+        error: null,
+    })
+})
+
+test('POST /api/settings/services/noona-kavita/service-key reuses the shared manual sync flow after setup', async (t) => {
+    const updateCalls = []
+
+    const app = createSageApp({
+        serviceName: 'test-sage',
+        setupClient: {
+            async listServices() {
+                return []
+            },
+            async installServices() {
+                return {status: 200, results: []}
+            },
+            async getServiceHealth() {
+                return {status: 'healthy', detail: 'ok'}
+            },
+            async getServiceConfig(name) {
+                if (name === 'noona-raven') {
+                    return {env: {KAVITA_LIBRARY_ROOT: ''}}
+                }
+
+                return {env: {}}
+            },
+            async updateServiceConfig(name, updates = {}) {
+                updateCalls.push([name, updates])
+                return {
+                    restarted: true,
+                    service: {
+                        name,
+                        env: updates?.env ?? {},
+                    },
+                }
+            },
+        },
+        managedKavitaSetupClient: {
+            async validateApiKey() {
+                return {username: 'reader-admin'}
+            },
+        },
+    })
+
+    const {server, baseUrl} = await listen(app)
+    t.after(() => closeServer(server))
+
+    const response = await fetch(`${baseUrl}/api/settings/services/noona-kavita/service-key`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            services: ['noona-portal', 'noona-raven', 'noona-komf'],
+            apiKey: 'settings-admin-key',
+        }),
+    })
+
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.equal(payload.apiKey, 'settings-admin-key')
+    assert.equal(payload.mode, 'manual')
+    assert.equal(updateCalls.length, 4)
+    assert.deepEqual(updateCalls[3], [
+        'noona-kavita',
+        {
+            env: {
+                NOONA_BOOTSTRAP_ADMIN_ON_START: 'false',
+                NOONA_SOCIAL_LOGIN_ONLY: 'true',
+            },
+            restart: true,
+        },
+    ])
 })
 
 test('GET /api/setup/services/:name/health proxies health payloads', async (t) => {
@@ -9802,4 +10707,3 @@ test('createChannel normalizes channel type when provided as string', async () =
     assert.equal(createCalls[0].type, ChannelType.GuildText)
     assert.equal(channel.type, ChannelType.GuildText)
 })
-

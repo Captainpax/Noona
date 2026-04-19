@@ -13,17 +13,21 @@ test('noona-kavita addon descriptor probes the Kavita API health endpoint with a
     assert.equal(kavita.healthDelayMs, 1000)
 })
 
-test('noona-kavita addon descriptor exposes optional first-admin bootstrap fields', () => {
+test('noona-kavita addon descriptor keeps manual hand-off controls internal and advanced-only', () => {
     const kavita = addonDockers['noona-kavita']
     assert.ok(kavita)
 
     const envKeys = new Set((Array.isArray(kavita.env) ? kavita.env : []).map((entry) => String(entry).split('=')[0]))
-    const configKeys = new Set((Array.isArray(kavita.envConfig) ? kavita.envConfig : []).map((entry) => entry?.key))
+    const configEntries = Array.isArray(kavita.envConfig) ? kavita.envConfig : []
+    const configKeys = new Set(configEntries.map((entry) => entry?.key))
 
     for (const key of ['KAVITA_ADMIN_USERNAME', 'KAVITA_ADMIN_EMAIL', 'KAVITA_ADMIN_PASSWORD']) {
-        assert.ok(envKeys.has(key), `${key} should be exported in the managed Kavita env.`)
-        assert.ok(configKeys.has(key), `${key} should be documented in managed Kavita envConfig.`)
+        assert.equal(envKeys.has(key), false, `${key} should not be exported in the managed Kavita env.`)
+        assert.equal(configKeys.has(key), false, `${key} should not be documented in managed Kavita envConfig.`)
     }
+
+    assert.ok(envKeys.has('NOONA_BOOTSTRAP_ADMIN_ON_START'))
+    assert.equal(configKeys.has('NOONA_BOOTSTRAP_ADMIN_ON_START'), false)
 })
 
 test('noona-kavita addon descriptor exposes Noona login bridge URLs and social-login-only mode', () => {
@@ -31,11 +35,19 @@ test('noona-kavita addon descriptor exposes Noona login bridge URLs and social-l
     assert.ok(kavita)
 
     const envKeys = new Set((Array.isArray(kavita.env) ? kavita.env : []).map((entry) => String(entry).split('=')[0]))
-    const configKeys = new Set((Array.isArray(kavita.envConfig) ? kavita.envConfig : []).map((entry) => entry?.key))
+    const configEntries = Array.isArray(kavita.envConfig) ? kavita.envConfig : []
+    const configKeys = new Set(configEntries.map((entry) => entry?.key))
 
     for (const key of ['NOONA_MOON_BASE_URL', 'NOONA_PORTAL_BASE_URL', 'NOONA_SOCIAL_LOGIN_ONLY']) {
         assert.ok(envKeys.has(key), `${key} should be exported in the managed Kavita env.`)
         assert.ok(configKeys.has(key), `${key} should be documented in managed Kavita envConfig.`)
+    }
+
+    assert.ok(envKeys.has('NOONA_BOOTSTRAP_ADMIN_ON_START'))
+
+    for (const key of ['NOONA_MOON_BASE_URL', 'NOONA_PORTAL_BASE_URL', 'NOONA_SOCIAL_LOGIN_ONLY']) {
+        const field = configEntries.find((entry) => entry?.key === key)
+        assert.equal(field?.advanced, true)
     }
 })
 

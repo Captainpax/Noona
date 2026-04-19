@@ -233,9 +233,17 @@ export function registerBootApi(context = {}) {
     const startServicesForBoot = async (names = [], options = {}) => {
         const forceRecreateNames =
             options?.forceRecreateNames instanceof Set ? options.forceRecreateNames : new Set();
+        const blockedManagedKavitaServices = new Set();
 
         for (let index = 0; index < names.length; index += 1) {
             const name = names[index];
+            if (blockedManagedKavitaServices.has(name)) {
+                logger.warn?.(
+                    `[Warden] Skipping ${name} during boot because the manual managed Kavita API-key hand-off has not completed yet.`,
+                );
+                continue;
+            }
+
             await startServiceForBoot(name, {
                 recreate: forceRecreateNames.has(name),
             });
@@ -250,7 +258,6 @@ export function registerBootApi(context = {}) {
                 if (remainingTargets.length > 0) {
                     const provisioning = await api.ensureManagedKavitaAccess({
                         targetServices: remainingTargets,
-                        allowRegister: false,
                         failOnError: false,
                     });
 
@@ -258,6 +265,16 @@ export function registerBootApi(context = {}) {
                         for (const configuredService of provisioning.configuredServices) {
                             if (typeof configuredService === 'string' && configuredService.trim()) {
                                 forceRecreateNames.add(configuredService);
+                            }
+                        }
+                    } else {
+                        const failedTargets =
+                            Array.isArray(provisioning?.configuredServices) && provisioning.configuredServices.length > 0
+                                ? provisioning.configuredServices
+                                : remainingTargets;
+                        for (const failedTarget of failedTargets) {
+                            if (typeof failedTarget === 'string' && failedTarget.trim()) {
+                                blockedManagedKavitaServices.add(failedTarget);
                             }
                         }
                     }

@@ -13,9 +13,6 @@ const DOCKER_WARDEN_URL =
     || process.env.INTERNAL_WARDEN_BASE_URL
     || 'http://noona-warden:4001';
 const DEFAULT_TIMEZONE = process.env.TZ || 'UTC';
-const DEFAULT_KAVITA_ADMIN_USERNAME = process.env.KAVITA_ADMIN_USERNAME || '';
-const DEFAULT_KAVITA_ADMIN_EMAIL = process.env.KAVITA_ADMIN_EMAIL || '';
-const DEFAULT_KAVITA_ADMIN_PASSWORD = process.env.KAVITA_ADMIN_PASSWORD || '';
 const DEFAULT_MOON_WEBGUI_PORT = (() => {
     const candidate = Number.parseInt(process.env.WEBGUI_PORT || '3000', 10);
     if (Number.isFinite(candidate) && candidate >= 1 && candidate <= 65535) {
@@ -26,7 +23,7 @@ const DEFAULT_MOON_WEBGUI_PORT = (() => {
 })();
 const DEFAULT_NOONA_MOON_BASE_URL = process.env.NOONA_MOON_BASE_URL || `${HOST_SERVICE_URL}:${DEFAULT_MOON_WEBGUI_PORT}`;
 const DEFAULT_NOONA_PORTAL_BASE_URL = process.env.NOONA_PORTAL_BASE_URL || 'http://noona-portal:3003';
-const DEFAULT_NOONA_SOCIAL_LOGIN_ONLY = process.env.NOONA_SOCIAL_LOGIN_ONLY || 'true';
+const DEFAULT_NOONA_SOCIAL_LOGIN_ONLY = process.env.NOONA_SOCIAL_LOGIN_ONLY || 'false';
 const DEFAULT_MONGO_ROOT_USERNAME = resolveManagedMongoRootUsername(process.env);
 const DEFAULT_MONGO_ROOT_PASSWORD = resolveManagedMongoRootPassword({env: process.env});
 const WARDEN_API_CLIENT_NAMES = Object.freeze(['noona-kavita', 'noona-komf']);
@@ -40,6 +37,7 @@ const createEnvField = (key, defaultValue, {
     readOnly = false,
     sensitive = false,
     serverManaged = false,
+    advanced = false,
 } = {}) => ({
     key,
     label,
@@ -50,6 +48,7 @@ const createEnvField = (key, defaultValue, {
     readOnly,
     sensitive,
     serverManaged,
+    advanced,
 });
 
 const rawList = [
@@ -154,11 +153,9 @@ const rawList = [
             `TZ=${DEFAULT_TIMEZONE}`,
             'KAVITA_CONFIG_HOST_MOUNT_PATH=',
             'KAVITA_LIBRARY_HOST_MOUNT_PATH=',
-            `KAVITA_ADMIN_USERNAME=${DEFAULT_KAVITA_ADMIN_USERNAME}`,
-            `KAVITA_ADMIN_EMAIL=${DEFAULT_KAVITA_ADMIN_EMAIL}`,
-            `KAVITA_ADMIN_PASSWORD=${DEFAULT_KAVITA_ADMIN_PASSWORD}`,
             `NOONA_MOON_BASE_URL=${DEFAULT_NOONA_MOON_BASE_URL}`,
             `NOONA_PORTAL_BASE_URL=${DEFAULT_NOONA_PORTAL_BASE_URL}`,
+            'NOONA_BOOTSTRAP_ADMIN_ON_START=false',
             `NOONA_SOCIAL_LOGIN_ONLY=${DEFAULT_NOONA_SOCIAL_LOGIN_ONLY}`,
         ],
         envConfig: [
@@ -190,41 +187,26 @@ const rawList = [
                 warning: 'Leave empty to share the default Noona Raven downloads folder.',
                 required: false,
             }),
-            createEnvField('KAVITA_ADMIN_USERNAME', DEFAULT_KAVITA_ADMIN_USERNAME, {
-                label: 'Initial Kavita Admin Username',
-                description: 'Optional username the managed noona-kavita image should use when bootstrapping the first admin account.',
-                warning: 'Provide this with the matching email and password if you want Noona to create the first Kavita admin automatically.',
-                required: false,
-            }),
-            createEnvField('KAVITA_ADMIN_EMAIL', DEFAULT_KAVITA_ADMIN_EMAIL, {
-                label: 'Initial Kavita Admin Email',
-                description: 'Optional email address used when the managed noona-kavita image registers the first admin account.',
-                warning: 'Provide this with the matching username and password if you want Noona to create the first Kavita admin automatically.',
-                required: false,
-            }),
-            createEnvField('KAVITA_ADMIN_PASSWORD', DEFAULT_KAVITA_ADMIN_PASSWORD, {
-                label: 'Initial Kavita Admin Password',
-                description: 'Optional password used when the managed noona-kavita image registers the first admin account.',
-                warning: 'Store and rotate this carefully if you keep it in managed service settings.',
-                required: false,
-            }),
             createEnvField('NOONA_MOON_BASE_URL', DEFAULT_NOONA_MOON_BASE_URL, {
                 label: 'Noona Moon Base URL',
                 description: 'Public Moon login URL Kavita should use for the "Log in with Noona" button.',
                 warning: 'Override this with your reverse-proxy URL when users cannot reach the default host-service Moon address.',
                 required: false,
+                advanced: true,
             }),
             createEnvField('NOONA_PORTAL_BASE_URL', DEFAULT_NOONA_PORTAL_BASE_URL, {
                 label: 'Noona Portal Base URL',
                 description: 'Internal Portal URL Kavita uses to redeem one-time Noona login tokens.',
                 warning: 'Change this only if Portal is reachable from Kavita at a different internal address.',
                 required: false,
+                advanced: true,
             }),
             createEnvField('NOONA_SOCIAL_LOGIN_ONLY', DEFAULT_NOONA_SOCIAL_LOGIN_ONLY, {
                 label: 'Noona Social Login Only',
                 description: 'When true, managed Kavita hides the username/password form and rejects local password logins in favor of the Noona login handoff.',
                 warning: 'Leave this enabled unless you intentionally need to restore direct Kavita password logins.',
                 required: false,
+                advanced: true,
             }),
         ],
         volumes: [],

@@ -26,11 +26,11 @@ import {firstValueFrom, forkJoin} from 'rxjs';
 const NOONA_ADMIN_BOOTSTRAP_POLL_ATTEMPTS = 10;
 const NOONA_ADMIN_BOOTSTRAP_POLL_DELAY_MS = 2000;
 const NOONA_ADMIN_BOOTSTRAP_WAITING_MESSAGE =
-  'Noona is finishing managed Kavita setup. This page will unlock automatically once the first Kavita admin is ready.';
+  'Noona is still waiting for managed Kavita setup to finish. If you are in the middle of setup, return to Moon, finish the Kavita hand-off, then come back here.';
 const NOONA_ADMIN_BOOTSTRAP_FAILED_MESSAGE =
-  'Noona is still waiting for the managed Kavita admin bootstrap. Return to Moon or Warden and confirm the managed Kavita setup completed.';
+  'Kavita is still locked behind Noona sign-in. Return to Moon, finish the managed Kavita API-key hand-off, then refresh this page.';
 const NOONA_ADMIN_BOOTSTRAP_ERROR_MESSAGE =
-  'Kavita could not confirm whether Noona finished the managed bootstrap. Return to Moon or Warden and try again.';
+  'Kavita could not confirm whether the managed Noona login hand-off is complete. Return to Moon and try again.';
 
 @Component({
   selector: 'app-user-login',
@@ -137,7 +137,7 @@ export class UserLoginComponent implements OnInit {
         this.noonaConfig.set(noonaConfig);
 
         if (!adminExists) {
-          if (noonaConfig.enabled) {
+          if (noonaConfig.enabled && noonaConfig.disablePasswordLogin) {
             this.beginNoonaAdminBootstrapWait();
             return;
           }

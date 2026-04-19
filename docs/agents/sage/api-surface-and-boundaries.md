@@ -51,6 +51,7 @@
   `/api/settings/debug`,
   `/api/settings/discord/onboarding-message`,
   `/api/settings/downloads/*`,
+  `/api/settings/services/noona-kavita/service-key`,
   `/api/settings/services*`,
   `/api/settings/ecosystem/*`,
   `/api/settings/factory-reset`,
@@ -145,6 +146,8 @@
 ## Error Model
 
 - Caller mistakes should throw or return `SetupValidationError` and surface as `400`.
+- Managed Kavita auto-sync can also return `409` with `manualFallbackRequired: true` when Kavita is healthy but Sage
+  still cannot validate or recover a reusable key for Portal, Raven, or Komf.
 - Upstream outages, unexpected responses, or persistence failures generally surface as `502`.
 - Warden-backed setup-config and settings routes are narrower:
   if Warden returned an HTTP status and JSON body, Sage should preserve that status and payload instead of collapsing

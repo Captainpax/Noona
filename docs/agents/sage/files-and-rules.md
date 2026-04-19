@@ -18,6 +18,8 @@
 - [../../../services/sage/routes/registerSetupRoutes.mjs](../../../services/sage/routes/registerSetupRoutes.mjs)
   Setup catalog, config snapshot proxying, wizard state, verification, service logs or tests, Discord validation, and
   managed Kavita API-key provisioning.
+- [../../../services/sage/routes/managedKavitaServiceKey.mjs](../../../services/sage/routes/managedKavitaServiceKey.mjs)
+  Shared managed Kavita key-sync helper used by both setup and signed-in settings routes.
 - [../../../services/sage/routes/registerAuthRoutes.mjs](../../../services/sage/routes/registerAuthRoutes.mjs)
   Pending-admin bootstrap, Discord OAuth config and callback flow, session login/logout, default member permissions,
   and CRUD for auth users.
@@ -81,6 +83,9 @@
 - Managed Kavita setup writes specific env keys per consumer service.
   Portal and Raven use `KAVITA_API_KEY` plus `KAVITA_BASE_URL`; Komf uses `KOMF_KAVITA_API_KEY` plus
   `KOMF_KAVITA_BASE_URI`.
+- Managed Kavita recovery must stay deterministic.
+  Reuse validated keys first, then the stored mirror, then the configured bootstrap account, and return
+  `manualFallbackRequired` instead of generating a surprise random managed account.
 
 ## Settings And Destructive Action Rules
 

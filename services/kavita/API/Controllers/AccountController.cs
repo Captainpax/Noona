@@ -402,10 +402,10 @@ public class AccountController : BaseApiController
     [HttpPost("register")]
     public async Task<ActionResult<UserDto>> RegisterFirstUser(RegisterDto registerDto)
     {
-        if (IsNoonaLoginEnabled() && !MatchesConfiguredNoonaBootstrapRegistration(registerDto))
+        if (IsNoonaSocialLoginOnlyEnabled() && !MatchesConfiguredNoonaBootstrapRegistration(registerDto))
         {
             _logger.LogWarning(
-                "Rejected direct first-user registration for {UserName} because Noona-managed login is enabled",
+                "Rejected direct first-user registration for {UserName} because Noona-managed social-login-only mode is enabled",
                 registerDto.Username);
             return StatusCode((int)HttpStatusCode.Forbidden, NoonaManagedFirstAdminMessage);
         }

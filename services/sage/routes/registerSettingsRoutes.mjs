@@ -2,6 +2,7 @@
 
 import {WardenUpstreamHttpError} from '../app/createSetupClient.mjs'
 import {SetupValidationError} from '../lib/errors.mjs'
+import {getManagedKavitaServiceKeyStatus, syncManagedKavitaServiceKey} from './managedKavitaServiceKey.mjs'
 
 const sendSetupClientUpstreamError = (res, error) => {
     if (!(error instanceof WardenUpstreamHttpError)) {
@@ -788,6 +789,68 @@ export function registerSettingsRoutes(context = {}) {
             }
 
             res.status(502).json({error: 'Unable to check service updates.'})
+        }
+    })
+
+    app.get('/api/settings/services/noona-kavita/service-key', async (req, res) => {
+        try {
+            const queryServices = []
+            for (const rawValue of [req.query?.services, req.query?.service]) {
+                if (Array.isArray(rawValue)) {
+                    queryServices.push(...rawValue)
+                    continue
+                }
+
+                if (typeof rawValue === 'string' && rawValue.trim()) {
+                    queryServices.push(...rawValue.split(','))
+                }
+            }
+
+            const payload = await getManagedKavitaServiceKeyStatus({
+                body: {
+                    services: queryServices,
+                },
+                logger,
+                managedKavitaSetupClient: context.managedKavitaSetupClient,
+                serviceName,
+                settingsCollection,
+                setupClient,
+                vaultClient,
+            })
+
+            res.status(payload?.manualFallbackRequired === true ? 409 : 200).json(payload)
+        } catch (error) {
+            if (error instanceof SetupValidationError) {
+                res.status(400).json({error: error.message})
+                return
+            }
+
+            logger.error(`[${serviceName}] Managed Kavita key status lookup failed from settings: ${error.message}`)
+            res.status(502).json({error: 'Unable to load managed Kavita recovery status.'})
+        }
+    })
+
+    app.post('/api/settings/services/noona-kavita/service-key', async (req, res) => {
+        try {
+            const payload = await syncManagedKavitaServiceKey({
+                body: req.body ?? {},
+                logger,
+                managedKavitaSetupClient: context.managedKavitaSetupClient,
+                serviceName,
+                settingsCollection,
+                setupClient,
+                vaultClient,
+            })
+
+            res.status(payload?.manualFallbackRequired === true ? 409 : 200).json(payload)
+        } catch (error) {
+            if (error instanceof SetupValidationError) {
+                res.status(400).json({error: error.message})
+                return
+            }
+
+            logger.error(`[${serviceName}] Managed Kavita key sync failed from settings: ${error.message}`)
+            res.status(502).json({error: 'Unable to sync the managed Kavita API key.'})
         }
     })
 

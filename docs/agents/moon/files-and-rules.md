@@ -21,8 +21,8 @@
 ## Setup, Auth, And Task UI
 
 - [../../../services/moon/src/components/noona/SetupWizard.tsx](../../../services/moon/src/components/noona/SetupWizard.tsx)
-  Main setup wizard, config import or export, managed Kavita provisioning, Discord validation, install polling, and
-  summary handoff.
+  Main setup wizard, config import or export, managed Kavita provisioning, install-step managed-key recovery, Discord
+  validation, install polling, and summary handoff.
 - [../../../services/moon/src/components/noona/SetupSummaryPage.tsx](../../../services/moon/src/components/noona/SetupSummaryPage.tsx)
   Service review, Discord OAuth test/bootstrap, and final setup completion.
 - [../../../services/moon/src/components/noona/setupProfile.mjs](../../../services/moon/src/components/noona/setupProfile.mjs)
@@ -34,7 +34,8 @@
 - [../../../services/moon/src/components/noona/KavitaLoginBridgePage.tsx](../../../services/moon/src/components/noona/KavitaLoginBridgePage.tsx)
   Converts a Moon session into a Portal-issued Kavita login handoff token.
 - [../../../services/moon/src/components/noona/SettingsPage.tsx](../../../services/moon/src/components/noona/SettingsPage.tsx)
-  Task-based settings UI, service update actions, user management, and reboot monitor entrypoint.
+  Task-based settings UI, service update actions, post-setup managed Kavita key recovery, user management, and reboot
+  monitor entrypoint.
 - [../../../services/moon/src/components/noona/settings/settingsRoutes.ts](../../../services/moon/src/components/noona/settings/settingsRoutes.ts)
   Canonical settings route mapping, titles, descriptions, and tab/view selection.
 
@@ -49,7 +50,8 @@
 - [../../../services/moon/src/app/api/noona/setup/](../../../services/moon/src/app/api/noona/setup/)
   Setup snapshot, layout, status, Discord test, managed Kavita service-key, and final completion bridge.
 - [../../../services/moon/src/app/api/noona/settings/](../../../services/moon/src/app/api/noona/settings/)
-  Settings and service-management proxies into Sage plus a few Portal-backed helpers.
+  Settings and service-management proxies into Sage plus a few Portal-backed helpers, including the managed Kavita
+  recovery route under `services/noona-kavita/service-key`.
 - [../../../services/moon/src/app/api/noona/raven/](../../../services/moon/src/app/api/noona/raven/)
   Raven browser actions proxied through Sage.
 - [../../../services/moon/src/app/api/noona/portal/](../../../services/moon/src/app/api/noona/portal/)

@@ -2,14 +2,19 @@
 
 ## Noona-Specific Runtime Inputs
 
-- `NOONA_BOOTSTRAP_ADMIN_ON_START`: server-managed flag that keeps the managed first-admin helper enabled for
-  `noona-kavita`.
-- `KAVITA_ADMIN_USERNAME`, `KAVITA_ADMIN_EMAIL`, `KAVITA_ADMIN_PASSWORD`: all-or-nothing bootstrap inputs.
+- `NOONA_BOOTSTRAP_ADMIN_ON_START`: legacy server-managed flag. Managed setup should now leave it `false`.
 - `NOONA_MOON_BASE_URL`: preferred absolute Moon URL for the login handoff.
 - `NOONA_MOON_PORT`: fallback Moon port when Kavita needs to derive a local Moon URL.
 - `HOST_SERVICE_URL` and `WEBGUI_PORT`: additional Moon URL fallback inputs used by the controller.
 - `NOONA_SOCIAL_LOGIN_ONLY`: disables local password login only when Noona login is actually configured.
 - `NOONA_PORTAL_BASE_URL`: Portal base URL used to consume one-time Kavita login tokens.
+
+## Managed Setup Guardrails
+
+- Managed setup should allow the local first-admin page while Moon is waiting for the manual Kavita hand-off.
+- Once Moon accepts a valid admin-capable API key, managed Kavita should return to `NOONA_SOCIAL_LOGIN_ONLY=true`.
+- Do not reintroduce shell-level admin bootstrap, automatic register/login flows, or logged recovery keys in the
+  container wrapper unless the product flow is intentionally being redesigned.
 
 ## Current Handoff Contract
 
@@ -21,8 +26,9 @@
   [account.service.ts](../../../services/kavita/UI/Web/src/app/_services/account.service.ts).
 - The server-side handoff logic lives in
   [AccountController.cs](../../../services/kavita/API/Controllers/AccountController.cs).
-- The same controller now blocks direct managed first-user registration unless the request matches the configured
-  bootstrap admin credentials, so Moon remains the supported interactive entrypoint.
+- The same controller only blocks direct managed first-user registration after `NOONA_SOCIAL_LOGIN_ONLY=true` again,
+  unless the request matches the configured bootstrap admin credentials.
+- During the manual hand-off, `NOONA_SOCIAL_LOGIN_ONLY=false` should leave Kavita's local first-admin path available.
 
 ## Integration Boundaries
 

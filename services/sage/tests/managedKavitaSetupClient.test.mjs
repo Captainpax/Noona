@@ -4,6 +4,8 @@ import test from 'node:test'
 import {
     createManagedKavitaServiceAccount,
     createManagedKavitaSetupClient,
+    MANAGED_KAVITA_STAGE_API_KEY_REQUIRED,
+    MANAGED_KAVITA_STAGE_BOOTSTRAP_ACCOUNT_REQUIRED,
 } from '../clients/managedKavitaSetupClient.mjs'
 
 test('createManagedKavitaServiceAccount generates a deterministic password when randomBytes is stubbed', () => {
@@ -16,9 +18,8 @@ test('createManagedKavitaServiceAccount generates a deterministic password when 
     assert.equal(account.password, Buffer.from('0123456789abcdef0123456789abcdef', 'hex').toString('base64url'))
 })
 
-test('ensureServiceApiKey registers the first admin and reuses the seeded OPDS auth key when apiKey is missing', async () => {
+test('ensureServiceApiKey requires the configured bootstrap account when no reusable key exists', async () => {
     const calls = []
-    let loginAttempts = 0
     const client = createManagedKavitaSetupClient({
         baseUrl: 'https://kavita.example',
         fetchImpl: async (url, options) => {
@@ -30,68 +31,16 @@ test('ensureServiceApiKey registers the first admin and reuses the seeded OPDS a
                 authorization: options.headers?.Authorization ?? null,
             })
 
-            if (requestUrl.pathname === '/api/Account/register') {
-                return {
-                    ok: true,
-                    status: 200,
-                    text: async () => JSON.stringify({id: 10, username: 'noona-system'}),
-                }
-            }
-
-            if (requestUrl.pathname === '/api/Account/login') {
-                loginAttempts += 1
-                if (loginAttempts === 1) {
-                    return {
-                        ok: false,
-                        status: 401,
-                        text: async () => JSON.stringify({error: 'Invalid credentials'}),
-                    }
-                }
-
-                return {
-                    ok: true,
-                    status: 200,
-                    text: async () => JSON.stringify({id: 10, username: 'noona-system', token: 'jwt-token'}),
-                }
-            }
-
-            if (requestUrl.pathname === '/api/Account/auth-keys') {
-                return {
-                    ok: true,
-                    status: 200,
-                    text: async () => JSON.stringify([
-                        {id: 7, key: 'seeded-opds-key', name: 'opds'},
-                        {id: 8, key: 'image-key', name: 'image-only'},
-                    ]),
-                }
-            }
-
-            if (requestUrl.pathname === '/api/plugin/authenticate') {
-                return {
-                    ok: true,
-                    status: 200,
-                    text: async () => JSON.stringify({username: 'noona-system', token: 'plugin-token'}),
-                }
-            }
-
             throw new Error(`Unexpected request: ${requestUrl.pathname}`)
         },
         randomBytes: () => Buffer.from('0123456789abcdef0123456789abcdef', 'hex'),
     })
 
-    const result = await client.ensureServiceApiKey({allowRegister: true})
-
-    assert.equal(result.apiKey, 'seeded-opds-key')
-    assert.equal(result.account.username, 'noona-system')
-    assert.deepEqual(calls.map((entry) => entry.pathname), [
-        '/api/Account/login',
-        '/api/Account/register',
-        '/api/Account/login',
-        '/api/Account/auth-keys',
-        '/api/plugin/authenticate',
-    ])
-    assert.equal(calls[3].authorization, 'Bearer jwt-token')
-    assert.equal(calls[3].body, null)
+    await assert.rejects(
+        () => client.ensureServiceApiKey({allowRegister: true}),
+        /configured bootstrap account or a valid admin-capable API key/i,
+    )
+    assert.deepEqual(calls, [])
 })
 
 test('ensureServiceApiKey reuses a stored account and returned apiKey without rotating another auth key', async () => {
@@ -551,4 +500,201 @@ test('ensureServiceApiKey validates reused candidates before accepting them', as
             ['fresh-existing-key', 'Noona Managed Services'],
         ],
     )
+})
+
+test('adminExists reads the Kavita admin-exists endpoint', async () => {
+    const client = createManagedKavitaSetupClient({
+        baseUrl: 'https://kavita.example',
+        fetchImpl: async (url) => {
+            const requestUrl = new URL(url)
+            assert.equal(requestUrl.pathname, '/api/admin/exists')
+            return {
+                ok: true,
+                status: 200,
+                text: async () => 'true',
+            }
+        },
+    })
+
+    assert.equal(await client.adminExists(), true)
+})
+
+test('ensureServiceApiKey uses register-first flow when social-login-only is enabled and no admin exists', async () => {
+    const calls = []
+    const client = createManagedKavitaSetupClient({
+        baseUrl: 'https://kavita.example',
+        fetchImpl: async (url, options) => {
+            const requestUrl = new URL(url)
+            calls.push({
+                pathname: requestUrl.pathname,
+                method: options.method,
+                body: options.body ? JSON.parse(options.body) : null,
+                authorization: options.headers?.Authorization ?? null,
+            })
+
+            if (requestUrl.pathname === '/api/admin/exists') {
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => 'false',
+                }
+            }
+
+            if (requestUrl.pathname === '/api/Account/register') {
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => JSON.stringify({
+                        id: 15,
+                        username: 'reader-admin',
+                        token: 'jwt-token',
+                    }),
+                }
+            }
+
+            if (requestUrl.pathname === '/api/Account/auth-keys') {
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => JSON.stringify([]),
+                }
+            }
+
+            if (requestUrl.pathname === '/api/Account/create-auth-key') {
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => JSON.stringify({id: 7, key: 'managed-api-key', name: 'Noona Managed Services'}),
+                }
+            }
+
+            if (requestUrl.pathname === '/api/plugin/authenticate') {
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => JSON.stringify({username: 'reader-admin', token: 'plugin-token'}),
+                }
+            }
+
+            throw new Error(`Unexpected request: ${requestUrl.pathname}`)
+        },
+    })
+
+    const result = await client.ensureServiceApiKey({
+        account: {
+            username: 'reader-admin',
+            email: 'reader-admin@example.com',
+            password: 'Password123!',
+        },
+        allowRegister: true,
+        socialLoginOnly: true,
+    })
+
+    assert.equal(result.apiKey, 'managed-api-key')
+    assert.equal(result.mode, 'register')
+    assert.deepEqual(calls.map((entry) => entry.pathname), [
+        '/api/admin/exists',
+        '/api/Account/register',
+        '/api/Account/auth-keys',
+        '/api/Account/create-auth-key',
+        '/api/plugin/authenticate',
+    ])
+    assert.equal(calls[3].authorization, 'Bearer jwt-token')
+    assert.equal(calls.some((entry) => entry.pathname === '/api/Account/login'), false)
+})
+
+test('ensureServiceApiKey returns api-key-required when social-login-only is enabled and an admin already exists', async () => {
+    const calls = []
+    const client = createManagedKavitaSetupClient({
+        baseUrl: 'https://kavita.example',
+        fetchImpl: async (url, options) => {
+            const requestUrl = new URL(url)
+            calls.push({
+                pathname: requestUrl.pathname,
+                method: options.method,
+            })
+
+            if (requestUrl.pathname === '/api/admin/exists') {
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => 'true',
+                }
+            }
+
+            throw new Error(`Unexpected request: ${requestUrl.pathname}`)
+        },
+    })
+
+    await assert.rejects(async () => {
+        await client.ensureServiceApiKey({
+            account: {
+                username: 'reader-admin',
+                email: 'reader-admin@example.com',
+                password: 'Password123!',
+            },
+            allowRegister: true,
+            socialLoginOnly: true,
+        })
+    }, (error) => {
+        assert.equal(error.stage, MANAGED_KAVITA_STAGE_API_KEY_REQUIRED)
+        assert.equal(error.adminExists, true)
+        return true
+    })
+
+    assert.deepEqual(calls.map((entry) => entry.pathname), ['/api/admin/exists'])
+})
+
+test('ensureServiceApiKey returns bootstrap-account-required when social-login-only bootstrap registration is rejected', async () => {
+    const calls = []
+    const client = createManagedKavitaSetupClient({
+        baseUrl: 'https://kavita.example',
+        fetchImpl: async (url, options) => {
+            const requestUrl = new URL(url)
+            calls.push({
+                pathname: requestUrl.pathname,
+                method: options.method,
+                body: options.body ? JSON.parse(options.body) : null,
+            })
+
+            if (requestUrl.pathname === '/api/admin/exists') {
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => 'false',
+                }
+            }
+
+            if (requestUrl.pathname === '/api/Account/register') {
+                return {
+                    ok: false,
+                    status: 403,
+                    text: async () => JSON.stringify({error: 'Denied'}),
+                }
+            }
+
+            throw new Error(`Unexpected request: ${requestUrl.pathname}`)
+        },
+    })
+
+    await assert.rejects(async () => {
+        await client.ensureServiceApiKey({
+            account: {
+                username: 'reader-admin',
+                email: 'reader-admin@example.com',
+                password: 'Password123!',
+            },
+            allowRegister: true,
+            socialLoginOnly: true,
+        })
+    }, (error) => {
+        assert.equal(error.stage, MANAGED_KAVITA_STAGE_BOOTSTRAP_ACCOUNT_REQUIRED)
+        assert.equal(error.adminExists, false)
+        return true
+    })
+
+    assert.deepEqual(calls.map((entry) => entry.pathname), [
+        '/api/admin/exists',
+        '/api/Account/register',
+    ])
 })

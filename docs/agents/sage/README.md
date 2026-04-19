@@ -35,8 +35,11 @@ Portal actions.
 - Managed Sage-to-Vault traffic is expected to use internal HTTPS plus explicit CA trust material.
   Packet/settings calls should fail closed on trust errors, while wizard-state storage may still keep its local
   fallback for first-run continuity.
-  Managed Kavita setup is the exception on the setup surface: the optional stored-settings read or mirror may defer
-  during Vault CA warm-up so provisioning can still complete.
+  Managed Kavita setup is the exception on the setup surface: the optional stored-key mirror may defer during Vault CA
+  warm-up so manual key sync can still complete.
+- Managed Kavita key sync now uses one shared helper for setup and signed-in settings.
+  Setup and settings should validate only the explicit pasted API key, mirror it into the dependent services, and
+  return a clean manual hand-off payload instead of trying to register, log into, or auto-create Kavita auth keys.
 - Sage seeds several admin settings in Vault on first successful admin persistence.
   Naming templates, the Discord onboarding message plus channel id and invite URL, default permissions, debug,
   download limits, and VPN settings all originate in
@@ -51,7 +54,8 @@ Portal actions.
 - Warden discovery and setup proxy behavior:
   [../../../services/sage/app/createSetupClient.mjs](../../../services/sage/app/createSetupClient.mjs)
 - setup wizard, verification, Discord validation, and managed Kavita setup:
-  [../../../services/sage/routes/registerSetupRoutes.mjs](../../../services/sage/routes/registerSetupRoutes.mjs)
+  [../../../services/sage/routes/registerSetupRoutes.mjs](../../../services/sage/routes/registerSetupRoutes.mjs),
+  [../../../services/sage/routes/managedKavitaServiceKey.mjs](../../../services/sage/routes/managedKavitaServiceKey.mjs)
 - local auth, Discord OAuth, sessions, users, and default permissions:
   [../../../services/sage/routes/registerAuthRoutes.mjs](../../../services/sage/routes/registerAuthRoutes.mjs)
 - admin settings, dangerous actions, and ecosystem restarts:
@@ -90,3 +94,4 @@ Portal actions.
   and [auth-bootstrap-and-state.md](auth-bootstrap-and-state.md).
 - If sessions, bootstrap, or wizard persistence changes,
   update [auth-bootstrap-and-state.md](auth-bootstrap-and-state.md).
+- If managed Kavita sync targets, fallback order, or manual-recovery semantics change, update [flows.md](flows.md).

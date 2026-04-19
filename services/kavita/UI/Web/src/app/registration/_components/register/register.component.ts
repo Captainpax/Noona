@@ -50,7 +50,7 @@ export class RegisterComponent implements OnInit {
       adminExists: this.memberService.adminExists(),
     }).subscribe({
       next: ({noonaConfig, adminExists}) => {
-        if (adminExists || noonaConfig.enabled) {
+        if (adminExists || (noonaConfig.enabled && noonaConfig.disablePasswordLogin)) {
           this.router.navigateByUrl('login');
           return;
         }

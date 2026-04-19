@@ -55,6 +55,13 @@
 - Wizard snapshots can carry masked secret placeholders.
   Those placeholders are safe for save and download round-trips, but live setup actions should not treat them as real
   credentials.
+- The install step can now hold a managed Kavita recovery state in local UI memory.
+  When Sage or Warden says Kavita is healthy but a manual API key is still missing for Portal, Raven, or
+  Komf, keep that recovery state on the install tab until the admin saves a replacement key or changes the managed
+  Kavita selection.
+- That recovery state is now manual-only.
+  `api-key-required` means Moon should open the Kavita hand-off popup, explain the first-admin and API-key steps, and
+  accept a pasted admin-capable API key without clearing the retry affordance too early.
 - Debug mode changes the UI surface.
   Advanced and derived env keys become more visible only when setup status says debug is enabled.
 - `ALWAYS_RUNNING` currently includes `noona-moon` and `noona-sage`.
@@ -133,6 +140,9 @@
 - Task navigation comes from
   [../../../services/moon/src/components/noona/settings/settingsRoutes.ts](../../../services/moon/src/components/noona/settings/settingsRoutes.ts),
   not from ad hoc route strings sprinkled across components.
+- `Admin -> Integrations -> Kavita` is the post-setup recovery surface for managed Kavita key sync.
+  Keep the messaging clear that the pasted key must belong to an admin-capable Kavita account and that the sync fans
+  out only to Portal, Raven, and Komf.
 
 ## Reboot Monitor State
 

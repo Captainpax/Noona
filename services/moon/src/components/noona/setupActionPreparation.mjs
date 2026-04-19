@@ -54,7 +54,7 @@ export const resolveSetupActionPreparation = (action) => {
 
     return {
         persistSnapshot: true,
-        provisionManagedKavita: normalizedAction === SETUP_ACTION_SUMMARY,
+        provisionManagedKavita: false,
         persistDiscordAuth: normalizedAction === SETUP_ACTION_SUMMARY,
     };
 };
